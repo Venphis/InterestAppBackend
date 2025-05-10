@@ -1,39 +1,45 @@
 // routes/userRoutes.js
 const express = require('express');
+const { body, param, query } = require('express-validator');
 const { protect } = require('../middleware/authMiddleware');
+const { uploadAvatar } = require('../../middleware/uploadMiddleware');
 const {
-    getUserProfile,
-    updateUserProfile,
-    findUsers,
-    getAllInterests,    // Dodane
-    addUserInterest,    // Dodane
-    updateUserInterest, // Dodane
-    removeUserInterest  // Dodane
-} = require('../controllers/userController');
+    getUserProfile, updateUserProfile, updateUserAvatar, findUsers,
+    addUserInterest, updateUserInterest, removeUserInterest
+} = require('../../controllers/userController');
 const router = express.Router();
 
-// Route publiczny (lub chroniony, wg uznania) do pobierania listy zainteresowań
-router.get('/interests', getAllInterests); // Przeniesione z userController
-
-// Wszystkie route'y poniżej wymagają bycia zalogowanym
 router.use(protect);
 
-// Profile routes
 router.route('/profile')
-  .get(getUserProfile)
-  .put(updateUserProfile);
+    .get(getUserProfile)
+    .put([
+        body('profile.displayName').optional({ checkFalsy: true }).trim().isLength({ min: 1, max: 50 }).withMessage('Display name must be between 1-50 chars').escape(),
+        body('profile.gender').optional().isIn(['male', 'female', 'other', 'prefer_not_to_say', '']),
+        body('profile.birthDate').optional({ checkFalsy: true }).isISO8601().toDate().withMessage('Invalid birth date format'),
+        body('profile.location').optional({ checkFalsy: true }).trim().isLength({ max: 100 }).escape(),
+        body('profile.bio').optional({ checkFalsy: true }).trim().isLength({ max: 500 }).escape(),
+        body('profile.broadcastMessage').optional({ checkFalsy: true }).trim().isLength({ max: 280 }).escape()
+    ], updateUserProfile);
 
-// User interests routes (nested under profile)
-router.route('/profile/interests')
-    .post(addUserInterest); // Dodaj zainteresowanie do profilu
+router.put('/profile/avatar', uploadAvatar.single('avatarImage'), updateUserAvatar);
 
-router.route('/profile/interests/:userInterestId')
-    .put(updateUserInterest)   // Aktualizuj opis zainteresowania
-    .delete(removeUserInterest); // Usuń zainteresowanie z profilu
+const userInterestIdValidation = [param('userInterestId').isMongoId().withMessage('Invalid UserInterest ID')];
 
-// Search route
-router.get('/search', findUsers); // np. /api/users/search?q=rob
+router.post('/profile/interests', [
+    body('interestId').isMongoId().withMessage('Valid Interest ID is required'),
+    body('customDescription').optional({ checkFalsy: true }).trim().isLength({ max: 200 }).withMessage('Description max 200 chars').escape()
+], addUserInterest);
 
-// Usunięto: /friends/add i /friends
+router.put('/profile/interests/:userInterestId', [
+    ...userInterestIdValidation,
+    body('customDescription').optional({ checkFalsy: true }).trim().isLength({ max: 200 }).withMessage('Description max 200 chars').escape()
+], updateUserInterest);
+
+router.delete('/profile/interests/:userInterestId', userInterestIdValidation, removeUserInterest);
+
+router.get('/search', [
+    query('q').notEmpty().withMessage('Search query "q" is required').isString().trim().isLength({min: 1, max: 50}).escape()
+], findUsers);
 
 module.exports = router;

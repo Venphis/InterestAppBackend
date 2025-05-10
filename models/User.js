@@ -54,6 +54,15 @@ const UserSchema = new mongoose.Schema({
   emailVerificationTokenExpires: { type: Date, select: false },
   passwordResetToken: { type: String, select: false },
   passwordResetTokenExpires: { type: Date, select: false },
+  isDeleted: {
+    type: Boolean,
+    default: false,
+    index: true // Indeks na tym polu może przyspieszyć zapytania filtrujące
+  },
+  deletedAt: {
+    type: Date,
+    default: null
+  }
 }, {
   timestamps: true,
 });

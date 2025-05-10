@@ -12,6 +12,10 @@ const orderUserIds = (userId1, userId2) => {
 // @route   POST /api/friendships/request
 // @access  Private
 const sendFriendRequest = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const recipientId = req.body.recipientId;
     const requesterId = req.user._id;
 
@@ -25,9 +29,9 @@ const sendFriendRequest = async (req, res) => {
 
     try {
         // Sprawdź czy odbiorca istnieje
-        const recipientExists = await User.findById(recipientId);
+        const recipientExists = await User.findOne({ _id: recipientId, isDeleted: false, isBanned: false });
         if (!recipientExists) {
-            return res.status(404).json({ message: 'Recipient user not found' });
+            return res.status(404).json({ message: 'Recipient user not found, deleted, or banned' });
         }
 
         // Sprawdź czy już istnieje znajomość (w dowolnym stanie) między tymi użytkownikami
@@ -86,6 +90,10 @@ const sendFriendRequest = async (req, res) => {
 // @route   PUT /api/friendships/:friendshipId/accept
 // @access  Private
 const acceptFriendRequest = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const { friendshipId } = req.params;
     const userId = req.user._id; // Użytkownik akceptujący
      const { friendshipType } = req.body; // Opcjonalnie: Pozwól ustawić typ przy akceptacji
@@ -139,6 +147,10 @@ const acceptFriendRequest = async (req, res) => {
 // @route   PUT /api/friendships/:friendshipId/reject
 // @access  Private
 const rejectFriendRequest = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const { friendshipId } = req.params;
     const userId = req.user._id; // Użytkownik odrzucający
 
@@ -175,6 +187,10 @@ const rejectFriendRequest = async (req, res) => {
 // @route   DELETE /api/friendships/:friendshipId
 // @access  Private
 const removeFriendship = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const { friendshipId } = req.params;
     const userId = req.user._id;
 
@@ -214,6 +230,10 @@ const removeFriendship = async (req, res) => {
 // @route   GET /api/friendships?status=...
 // @access  Private
 const getFriendships = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const userId = req.user._id;
     const { status } = req.query; // Filtruj po statusie (np. 'accepted', 'pending')
 
@@ -230,13 +250,16 @@ const getFriendships = async (req, res) => {
 
     try {
         const friendships = await Friendship.find(query)
-            .populate('user1', 'username profile') // Pobierz dane obu użytkowników
-            .populate('user2', 'username profile')
-            .populate('requestedBy', 'username') // Pobierz username osoby, która wysłała zaproszenie
-            .sort({ createdAt: -1 }); // Sortuj od najnowszych
+            // --- ZMIANA w populate ---
+            // Populacja musi być ostrożna. Jeśli user1 lub user2 jest 'isDeleted', Mongoose zwróci null dla tego pola.
+            // Można albo filtrować takie znajomości po stronie serwera, albo obsłużyć null na frontendzie.
+            .populate({ path: 'user1', select: 'username profile isDeleted', match: { isDeleted: false } })
+            .populate({ path: 'user2', select: 'username profile isDeleted', match: { isDeleted: false } })
+            .populate('requestedBy', 'username')
+            .sort({ createdAt: -1 });
 
          // Przetwórz wyniki, aby zwrócić dane "drugiego" użytkownika i status z perspektywy zalogowanego
-         const processedFriendships = friendships.map(f => {
+         const processedFriendships = friendships.filter(f => f.user1 && f.user2).map(f => {
             // Znajdź dane "tego drugiego"
             const otherUser = f.user1._id.equals(userId) ? f.user2 : f.user1;
             return {

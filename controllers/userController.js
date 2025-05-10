@@ -1,12 +1,19 @@
 // controllers/userController.js
 const User = require('../models/User');
 const UserInterest = require('../models/UserInterest');
-const Interest = require('../models/Interest'); // Potrzebne do walidacji
+const Interest = require('../models/Interest'); 
+const logAuditEvent = require('../../utils/auditLogger'); // Dodaj, jeśli potrzebne
+const fs = require('fs'); // Do usuwania starych avatarów
+const path = require('path');
 
 // @desc    Get current user profile (optionally populated)
 // @route   GET /api/users/profile
 // @access  Private
 const getUserProfile = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
   try {
     // req.user jest już pobrany przez middleware 'protect' bez hasła
     // Opcjonalnie: Pobierz i dołącz zainteresowania użytkownika
@@ -32,42 +39,34 @@ const getUserProfile = async (req, res) => {
 // @route   PUT /api/users/profile
 // @access  Private
 const updateUserProfile = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     try {
         const user = await User.findById(req.user._id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
 
-        if (!user) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-
-        // Aktualizuj pola profilu, jeśli zostały przesłane
         const profileUpdates = req.body.profile || {};
         user.profile.displayName = profileUpdates.displayName || user.profile.displayName;
-        user.profile.avatarUrl = profileUpdates.avatarUrl || user.profile.avatarUrl;
+        // user.profile.avatarUrl - to będzie aktualizowane przez osobny endpoint
         user.profile.gender = profileUpdates.gender || user.profile.gender;
         user.profile.birthDate = profileUpdates.birthDate || user.profile.birthDate;
         user.profile.location = profileUpdates.location || user.profile.location;
         user.profile.bio = profileUpdates.bio || user.profile.bio;
         user.profile.broadcastMessage = profileUpdates.broadcastMessage || user.profile.broadcastMessage;
 
-        // Opcjonalnie: Aktualizacja email/username (wymaga ostrożności i walidacji unikalności)
-        // user.username = req.body.username || user.username;
-        // user.email = req.body.email || user.email;
-
         const updatedUser = await user.save();
-
-         // Pobierz zaktualizowane zainteresowania (jeśli chcesz zwrócić pełny profil)
-        const userInterests = await UserInterest.find({ userId: updatedUser._id })
-                                                .populate('interestId', 'name category');
-
+        const userInterests = await UserInterest.find({ userId: updatedUser._id }).populate('interestId', 'name category');
+        await logAuditEvent('user_profile_updated_text', { type: 'user', id: req.user._id }, 'info', {}, { updatedFields: Object.keys(profileUpdates) }, req);
         res.json({
-            ...updatedUser.toObject(),
+            ...updatedUser.toObject({ virtuals: true }), // Dodaj virtuals jeśli masz np. age
              interests: userInterests.map(ui => ({
                 userInterestId: ui._id,
                 interest: ui.interestId,
                 customDescription: ui.customDescription
             }))
         });
-
     } catch (error) {
          console.error('Update Profile Error:', error);
          if (error.name === 'ValidationError') {
@@ -86,6 +85,10 @@ const updateUserProfile = async (req, res) => {
 // @route   GET /api/users/search?q=...
 // @access  Private
 const findUsers = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const query = req.query.q;
     if (!query) {
         return res.status(400).json({ message: 'Search query "q" is required' });
@@ -96,9 +99,9 @@ const findUsers = async (req, res) => {
             { username: { $regex: query, $options: 'i' } },
             { 'profile.displayName': { $regex: query, $options: 'i' } }
         ],
-        _id: { $ne: req.user._id } // Wyklucz samego siebie
+        _id: { $ne: req.user._id },
+        isDeleted: false // --- ZMIANA ---
     };
-
     try {
         const users = await User.find(keyword).select('username email profile'); // Zwróć wybrane pola
         res.json(users);
@@ -111,24 +114,15 @@ const findUsers = async (req, res) => {
 
 // --- Kontrolery Zainteresowań Użytkownika ---
 
-// @desc    Get all predefined interests (optional)
-// @route   GET /api/interests
-// @access  Public or Private
-const getAllInterests = async (req, res) => {
-    try {
-        const interests = await Interest.find().sort('name');
-        res.json(interests);
-    } catch (error) {
-        console.error('Get All Interests Error:', error);
-        res.status(500).json({ message: 'Server Error fetching interests' });
-    }
-};
-
 
 // @desc    Add an interest to the logged-in user's profile
 // @route   POST /api/users/profile/interests
 // @access  Private
 const addUserInterest = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const { interestId, customDescription } = req.body;
     const userId = req.user._id;
 
@@ -180,6 +174,10 @@ const addUserInterest = async (req, res) => {
 // @route   PUT /api/users/profile/interests/:userInterestId
 // @access  Private
 const updateUserInterest = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const { userInterestId } = req.params;
     const { customDescription } = req.body;
     const userId = req.user._id;
@@ -218,6 +216,10 @@ const updateUserInterest = async (req, res) => {
 // @route   DELETE /api/users/profile/interests/:userInterestId
 // @access  Private
 const removeUserInterest = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const { userInterestId } = req.params;
     const userId = req.user._id;
 
@@ -239,6 +241,73 @@ const removeUserInterest = async (req, res) => {
 };
 
 
+// @desc    Update user avatar
+// @route   PUT /api/users/profile/avatar
+// @access  Private
+const updateUserAvatar = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+    if (!req.file) { // req.file jest dodawane przez multer
+        return res.status(400).json({ message: 'No avatar image file uploaded.' });
+    }
+
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) {
+            // Usuń wgrany plik, jeśli użytkownik nie istnieje (choć to nie powinno się zdarzyć z protect)
+            fs.unlink(req.file.path, (err) => { if (err) console.error("Error deleting orphaned avatar:", err); });
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        // Usuń stary avatar, jeśli istnieje i nie jest domyślnym
+        if (user.profile.avatarUrl && !user.profile.avatarUrl.includes('default')) { // Załóżmy, że domyślne avatary nie są w /public/uploads
+            const oldAvatarPathName = user.profile.avatarUrl.split('/public/')[1];
+            if (oldAvatarPathName) {
+                const oldAvatarFullPath = path.join(__dirname, '..', 'public', oldAvatarPathName);
+                 if (fs.existsSync(oldAvatarFullPath)) {
+                    fs.unlink(oldAvatarFullPath, (err) => {
+                        if (err) console.error("Error deleting old avatar:", err);
+                        else console.log("Old avatar deleted:", oldAvatarFullPath);
+                    });
+                }
+            }
+        }
+
+        // Zapisz ścieżkę do nowego avatara
+        // req.file.path to pełna ścieżka systemowa
+        // Chcemy zapisać względny URL dostępny przez serwer statyczny
+        const relativePath = `/public/uploads/avatars/${req.file.filename}`;
+        user.profile.avatarUrl = relativePath;
+        await user.save();
+
+        await logAuditEvent(
+            'user_avatar_updated',
+            { type: 'user', id: req.user._id },
+            'info', {}, { newAvatarPath: relativePath }, req
+        );
+
+        res.json({
+            message: 'Avatar updated successfully.',
+            avatarUrl: relativePath, // Zwróć nowy URL avatara
+            user: { // Możesz zwrócić zaktualizowany obiekt użytkownika
+                _id: user._id,
+                username: user.username,
+                profile: user.profile
+            }
+        });
+
+    } catch (error) {
+        console.error('Update Avatar Error:', error);
+        // Usuń wgrany plik w przypadku błędu zapisu do bazy
+        fs.unlink(req.file.path, (err) => { if (err) console.error("Error deleting uploaded avatar on DB error:", err); });
+        await logAuditEvent('user_avatar_update_error', { type: 'user', id: req.user._id }, 'error', {}, { error: error.message }, req);
+        res.status(500).json({ message: 'Server error updating avatar.' });
+    }
+};
+
+
 module.exports = {
     getUserProfile,
     updateUserProfile,
@@ -247,4 +316,5 @@ module.exports = {
     addUserInterest, // Dodane
     updateUserInterest, // Dodane
     removeUserInterest, // Dodane
+    updateUserAvatar,
 };

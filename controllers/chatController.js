@@ -7,6 +7,10 @@ const User = require('../models/User');
 // @route   POST /api/chats
 // @access  Private
 const accessChat = async (req, res) => {
+  const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
   const { userId } = req.body; // ID drugiego użytkownika
 
   if (!userId) {
@@ -17,12 +21,15 @@ const accessChat = async (req, res) => {
   const currentUser = req.user._id;
 
   try {
+    const recipientUser = await User.findOne({ _id: userId, isDeleted: false, isBanned: false });
+    if (!recipientUser) return res.status(404).json({ message: "Recipient user not found or inactive" });
+
     // Sprawdź czy czat między tymi dwoma użytkownikami już istnieje
     let existingChat = await Chat.findOne({
       participants: { $all: [currentUser, userId] }
     })
-    .populate("participants", "-password") // Pobierz dane uczestników bez hasła
-    .populate("lastMessage"); // Pobierz ostatnią wiadomość
+    .populate({ path: "participants", select: "-password", match: { isDeleted: false } }) // Filtruj usuniętych
+    .populate("lastMessage");
 
     // Jeśli czat istnieje, zwróć go
     if (existingChat) {
@@ -56,13 +63,19 @@ const accessChat = async (req, res) => {
 // @route   GET /api/chats
 // @access  Private
 const fetchChats = async (req, res) => {
+  const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
   try {
     // Znajdź wszystkie czaty, w których uczestniczy zalogowany użytkownik
     const chats = await Chat.find({ participants: { $elemMatch: { $eq: req.user._id } } })
-      .populate("participants", "-password")
-      .populate("lastMessage")
-      // Można dodać .populate("lastMessage.senderId", "username email") jeśli potrzebne
-      .sort({ lastMessageTimestamp: -1 }); // Sortuj od najnowszej aktywności
+    .populate({ path: "participants", select: "-password", match: { isDeleted: false } })
+    .populate({
+        path: "lastMessage",
+        populate: { path: "senderId", select: "username profile.avatarUrl", match: { isDeleted: false } }
+    })
+    .sort({ lastMessageTimestamp: -1 });
 
     // Można tu dodać logikę zapełnienia danych nadawcy ostatniej wiadomości dla każdego czatu
     // const populatedChats = await User.populate(chats, { path: "lastMessage.sender", select: "username email profile.avatarUrl" });
@@ -78,6 +91,10 @@ const fetchChats = async (req, res) => {
 // @route   POST /api/messages
 // @access  Private
 const sendMessage = async (req, res) => {
+  const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const { content, chatId } = req.body;
 
     if (!content || !chatId) {
@@ -95,8 +112,11 @@ const sendMessage = async (req, res) => {
         let message = await Message.create(newMessage);
 
         // Zapełnij dane nadawcy i czatu (uczestników)
-        message = await message.populate("senderId", "username profile.avatarUrl"); // Dodaj .execPopulate() jeśli używasz starszej wersji Mongoose
-        message = await message.populate("chatId");
+        message = await message.populate({path: "senderId", select: "username profile.avatarUrl", match: {isDeleted: false}});
+        message = await message.populate({
+            path: "chatId",
+            populate: { path: "participants", select: "username email profile.avatarUrl", match: {isDeleted: false} }
+        });
         message = await User.populate(message, { // Zapełnij uczestników w czacie
             path: "chatId.participants",
             select: "username email profile.avatarUrl",
@@ -124,13 +144,17 @@ const sendMessage = async (req, res) => {
 // @route   GET /api/messages/:chatId
 // @access  Private
 const allMessages = async (req, res) => {
+  const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     try {
         // Pobierz wszystkie wiadomości dla danego chatId, posortowane od najnowszej
         // Dodaj .limit() i .skip() dla paginacji w przyszłości
         const messages = await Message.find({ chatId: req.params.chatId })
-            .populate("senderId", "username email profile.avatarUrl") // Zapełnij dane nadawcy
-            .populate("chatId") // Można pominąć jeśli nie potrzebujesz info o czacie tutaj
-            .sort({ createdAt: -1 }); // Pobierz od najnowszych
+            .populate({path: "senderId", select: "username email profile.avatarUrl", match: {isDeleted: false}})
+            .populate("chatId")
+            .sort({ createdAt: -1 });
 
         res.json(messages);
     } catch (error) {

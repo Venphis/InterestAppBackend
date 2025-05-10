@@ -1,5 +1,6 @@
 // routes/friendshipRoutes.js
 const express = require('express');
+const { body, param, query } = require('express-validator'); // Dodano query
 const { protect } = require('../middleware/authMiddleware');
 const {
     sendFriendRequest,
@@ -10,18 +11,28 @@ const {
 } = require('../controllers/friendshipController');
 const router = express.Router();
 
-// Wszystkie route'y znajomości wymagają bycia zalogowanym
-router.use(protect);
+router.use(protect); // Wszystkie trasy chronione
 
-// Pobierz wszystkie znajomości (z opcjonalnym filtrem statusu)
-router.get('/', getFriendships); // GET /api/friendships?status=accepted
+const friendshipIdValidation = [param('friendshipId').isMongoId().withMessage('Invalid Friendship ID')];
+const allowedFriendshipTypes = ['friend', 'close_friend', 'acquaintance', 'family', 'work_colleague', 'romantic_partner', 'other'];
+const allowedFriendshipStatuses = ['pending', 'accepted', 'rejected', 'blocked'];
 
-// Wyślij zaproszenie
-router.post('/request', sendFriendRequest); // POST /api/friendships/request
 
-// Akcje na konkretnym zaproszeniu/znajomości
-router.put('/:friendshipId/accept', acceptFriendRequest); // PUT /api/friendships/{id}/accept
-router.put('/:friendshipId/reject', rejectFriendRequest); // PUT /api/friendships/{id}/reject
-router.delete('/:friendshipId', removeFriendship);      // DELETE /api/friendships/{id} (unfriend lub cancel request)
+router.get('/', [
+    query('status').optional().isIn(allowedFriendshipStatuses).withMessage(`Invalid status. Allowed: ${allowedFriendshipStatuses.join(', ')}`)
+], getFriendships);
+
+router.post('/request', [
+    body('recipientId').isMongoId().withMessage('Invalid recipient ID'),
+    body('friendshipType').optional().isIn(allowedFriendshipTypes).withMessage(`Invalid friendship type. Allowed: ${allowedFriendshipTypes.join(', ')}`)
+], sendFriendRequest);
+
+router.put('/:friendshipId/accept', [
+    ...friendshipIdValidation,
+    body('friendshipType').optional().isIn(allowedFriendshipTypes).withMessage(`Invalid friendship type. Allowed: ${allowedFriendshipTypes.join(', ')}`)
+], acceptFriendRequest);
+
+router.put('/:friendshipId/reject', friendshipIdValidation, rejectFriendRequest);
+router.delete('/:friendshipId', friendshipIdValidation, removeFriendship);
 
 module.exports = router;

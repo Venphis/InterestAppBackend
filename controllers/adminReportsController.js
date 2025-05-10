@@ -5,6 +5,10 @@ const Report = require('../models/Report');
 // @route   GET /api/admin/reports
 // @access  Private (Admin/Moderator)
 const getAllReports = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
@@ -46,6 +50,10 @@ const getAllReports = async (req, res) => {
 // @route   GET /api/admin/reports/:reportId
 // @access  Private (Admin/Moderator)
 const getReportById = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     try {
         const report = await Report.findById(req.params.reportId)
             .populate('reportedBy', 'username email profile')
@@ -73,6 +81,10 @@ const getReportById = async (req, res) => {
 // @route   PUT /api/admin/reports/:reportId
 // @access  Private (Admin/Moderator)
 const updateReport = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const { status, adminNotes } = req.body;
     // req.adminUser jest dostępne z protectAdmin middleware
 
@@ -100,6 +112,15 @@ const updateReport = async (req, res) => {
         report.reviewedBy = req.adminUser._id; // Zapisz ID admina, który zaktualizował
 
         const updatedReport = await report.save();
+
+        await logAuditEvent(
+            'admin_updated_report',
+            { type: 'admin', id: req.adminUser._id },
+            'admin_action',
+            { type: 'report', id: updatedReport._id },
+            { previousStatus: oldStatus, newStatus: updatedReport.status, adminNotesAdded: !!adminNotes }, req
+        );
+
         res.json({ message: 'Report updated successfully.', report: updatedReport });
 
     } catch (error) {

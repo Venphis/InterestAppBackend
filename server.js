@@ -5,6 +5,9 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 const http = require('http');
 const { Server } = require("socket.io");
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
+const path = require('path');
 
 // Import Route'ów
 const authRoutes = require('./routes/authRoutes');
@@ -13,16 +16,33 @@ const chatRoutes = require('./routes/chatRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const messageRoutes = require('./routes/messageRoutes');
 const friendshipRoutes = require('./routes/friendshipRoutes');
-const adminAuthRoutes = require('./routes/adminAuthRoutes'); // <-- NOWY IMPORT
+const adminAuthRoutes = require('./routes/adminAuthRoutes'); 
 const adminUserRoutes = require('./routes/adminUserRoutes');
 const adminReportRoutes = require('./routes/adminReportRoutes');
+const adminInterestRoutes = require('./routes/adminInterestRoutes');
+const publicInterestRoutes = require('./routes/publicInterestRoutes');
+const adminManagementRoutes = require('./routes/adminManagementRoutes');
+const adminAuditLogRoutes = require('./routes/adminAuditLogRoutes');
+
 
 dotenv.config();
 connectDB();
 
 const app = express();
 app.use(cors());
+
+app.use(helmet());
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minut
+  max: 100, // Limit każdego IP do 100 zapytań na windowMs
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  message: 'Too many requests from this IP, please try again after 15 minutes'
+});
+app.use('/api', limiter);
+
 app.use(express.json());
+app.use('/public', express.static(path.join(__dirname, 'public')));
 
 app.get('/', (req, res) => {
   res.send('API is running...');
@@ -39,8 +59,11 @@ app.use('/api/reports', reportRoutes);
 // --- Admin Routes ---
 app.use('/api/admin/auth', adminAuthRoutes);
 app.use('/api/admin/users', adminUserRoutes);
-app.use('/api/admin/reports', adminReportRoutes); // <-- NOWE UŻYCIE (dla logowania admina)
-// TODO: Później dodamy tutaj /api/admin/users, /api/admin/reports itp.
+app.use('/api/admin/reports', adminReportRoutes);
+app.use('/api/admin/interests', adminInterestRoutes);
+app.use('/api/public/interests', publicInterestRoutes);
+app.use('/api/admin/management', adminManagementRoutes);
+app.use('/api/admin/audit-logs', adminAuditLogRoutes);
 
 
 // Konfiguracja Serwera HTTP i Socket.IO (bez zmian na razie)

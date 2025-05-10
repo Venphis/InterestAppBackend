@@ -7,6 +7,10 @@ const Message = require('../models/Message');
 // @route   POST /api/reports
 // @access  Private (User)
 const createReport = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const { reportedUserId, reportedMessageId, reportType, reason } = req.body;
 
     if (!reportType || !reason) {

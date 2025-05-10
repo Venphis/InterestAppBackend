@@ -3,6 +3,8 @@ const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const sendEmail = require('../utils/sendEmail');
+const logAuditEvent = require('../utils/auditLogger');
+const { validationResult } = require('express-validator');
 require('dotenv').config();
 
 const generateToken = (id) => {
@@ -20,70 +22,75 @@ const createAndHashToken = () => {
     return { token, hashedToken };
 };
 
-// registerUser - bez zmian (już zaimplementowany)
 const registerUser = async (req, res) => {
-  const { username, email, password } = req.body;
-
-  if (!username || !email || !password) {
-      return res.status(400).json({ message: 'Please provide username, email, and password' });
-  }
-   if (password.length < 6) {
-       return res.status(400).json({ message: 'Password must be at least 6 characters long' });
-   }
-
-  try {
-    const userExists = await User.findOne({ $or: [{ email }, { username }] });
-    if (userExists) {
-      return res.status(400).json({ message: 'User with this email or username already exists' });
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
     }
 
-    const { token: verificationToken, hashedToken: emailVerificationToken } = createAndHashToken();
-    const emailVerificationTokenExpires = Date.now() + 10 * 60 * 1000; // Token ważny 10 minut
+    const { username, email, password } = req.body;
 
-    const user = await User.create({
-      username,
-      email,
-      password,
-      emailVerificationToken,
-      emailVerificationTokenExpires,
-    });
+    try {
+        const userExists = await User.findOne({ $or: [{ email }, { username }] });
+        if (userExists) {
+            if (userExists.isDeleted) {
+                await logAuditEvent('user_registration_attempt_deleted_account', { type: 'system' }, 'warn', {}, { email, username }, req);
+                return res.status(400).json({ message: 'An account with this email or username previously existed and was deleted. Please contact support or use different credentials.' });
+            }
+            await logAuditEvent('user_registration_attempt_existing_account', { type: 'system' }, 'warn', {}, { email, username }, req);
+            return res.status(400).json({ message: 'User with this email or username already exists' });
+        }
 
-    const verificationURL = `${req.protocol}://${req.get('host')}/api/auth/verify-email/${verificationToken}`;
-    const message = `
-        Witaj ${user.username},\n\n
-        Dziękujemy za rejestrację! Aby aktywować swoje konto, kliknij w poniższy link (ważny przez 10 minut):\n
-        ${verificationURL}\n\n
-        Jeśli to nie Ty zakładałeś konto, zignoruj tę wiadomość.\n\n
-        Pozdrawiamy,\nZespół Social App
-    `;
+        const { token: verificationToken, hashedToken: emailVerificationToken } = createAndHashToken();
+        const emailVerificationTokenExpires = Date.now() + 10 * 60 * 1000; // Token ważny 10 minut
 
-    await sendEmail({
-        email: user.email,
-        subject: 'Aktywacja Konta w Social App',
-        message,
-    });
+        const user = await User.create({
+            username,
+            email,
+            password,
+            emailVerificationToken,
+            emailVerificationTokenExpires,
+        });
 
-    res.status(201).json({
-        message: 'User registered successfully. Please check your email to activate your account.',
-      });
+        const verificationURL = `${req.protocol}://${req.get('host')}/api/auth/verify-email/${verificationToken}`;
+        const message = `
+            Witaj ${user.username},\n\n
+            Dziękujemy za rejestrację! Aby aktywować swoje konto, kliknij w poniższy link (ważny przez 10 minut):\n
+            ${verificationURL}\n\n
+            Jeśli to nie Ty zakładałeś konto, zignoruj tę wiadomość.\n\n
+            Pozdrawiamy,\nZespół Social App
+        `;
 
-  } catch (error) {
-    console.error('Registration Error:', error);
-    if (error.name === 'ValidationError') {
-        const messages = Object.values(error.errors).map(val => val.message);
-        return res.status(400).json({ message: messages.join(', ') });
+        await sendEmail({
+            email: user.email,
+            subject: 'Aktywacja Konta w Social App',
+            message,
+        });
+
+        await logAuditEvent('user_registered', { type: 'user', id: user._id }, 'info', {}, { email: user.email }, req);
+        res.status(201).json({
+            message: 'User registered successfully. Please check your email to activate your account.',
+        });
+
+    } catch (error) {
+        console.error('Registration Error:', error);
+        await logAuditEvent('user_registration_error', {type: 'system'}, 'error', {}, {error: error.message, attemptEmail: email, attemptUsername: username}, req);
+
+        if (error.name === 'ValidationError') { // Błąd z Mongoose
+            const messages = Object.values(error.errors).map(val => val.message);
+            return res.status(400).json({ message: messages.join(', ') });
+        }
+        // Nie usuwamy użytkownika w przypadku błędu, aby uniknąć race conditions lub utraty danych
+        res.status(500).json({ message: 'Server Error during registration. Please try again.' });
     }
-    if (email && !res.headersSent) {
-        const userToDelete = await User.findOne({email});
-        if(userToDelete && !userToDelete.isEmailVerified) await User.deleteOne({email});
-    }
-    res.status(500).json({ message: 'Server Error during registration. Please try again.' });
-  }
 };
 
-
-// verifyEmail - bez zmian (już zaimplementowany)
 const verifyEmail = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
     try {
         const token = req.params.token;
         const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
@@ -94,37 +101,56 @@ const verifyEmail = async (req, res) => {
         });
 
         if (!user) {
+            await logAuditEvent('user_email_verify_failed', { type: 'system' }, 'warn', {}, { reason: 'Invalid or expired token', tokenAttempt: token }, req);
             return res.status(400).json({ message: 'Invalid or expired verification token. Please request a new one.' });
         }
 
         user.isEmailVerified = true;
         user.emailVerificationToken = undefined;
         user.emailVerificationTokenExpires = undefined;
-        await user.save({ validateBeforeSave: false });
 
+        if (user.isDeleted) {
+            user.isDeleted = false;
+            user.deletedAt = null;
+            await logAuditEvent('user_account_restored_on_email_verify', { type: 'user', id: user._id }, 'info', {}, {}, req);
+        }
+
+        await user.save({ validateBeforeSave: false });
+        await logAuditEvent('user_email_verified', { type: 'user', id: user._id }, 'info', {}, {}, req);
         res.status(200).json({ message: 'Email verified successfully. You can now log in.' });
 
     } catch (error) {
         console.error('Email Verification Error:', error);
+        await logAuditEvent('user_email_verify_error', { type: 'system' }, 'error', {}, { error: error.message, tokenAttempt: req.params.token }, req);
         res.status(500).json({ message: 'Server error during email verification.' });
     }
 };
 
-// resendVerificationEmail - bez zmian (już zaimplementowany)
 const resendVerificationEmail = async (req, res) => {
-    const { email } = req.body;
-    if (!email) {
-        return res.status(400).json({ message: 'Please provide an email address.' });
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
     }
+    const { email } = req.body;
 
     try {
         const user = await User.findOne({ email });
         if (!user) {
+            await logAuditEvent('user_resend_verification_not_found', { type: 'system' }, 'warn', {}, { attemptEmail: email }, req);
             return res.status(404).json({ message: 'User with this email not found.' });
         }
         if (user.isEmailVerified) {
             return res.status(400).json({ message: 'This email is already verified.' });
         }
+        if (user.isBanned) {
+            await logAuditEvent('user_resend_verification_banned_account', { type: 'user', id: user._id }, 'warn', {}, {}, req);
+            return res.status(403).json({ message: 'This account is banned and cannot request a new verification email.' });
+        }
+         if (user.isDeleted) {
+            await logAuditEvent('user_resend_verification_deleted_account', { type: 'user', id: user._id }, 'warn', {}, {}, req);
+            return res.status(403).json({ message: 'This account has been deleted. Please contact support.' });
+        }
+
 
         const { token: verificationToken, hashedToken: emailVerificationToken } = createAndHashToken();
         user.emailVerificationToken = emailVerificationToken;
@@ -140,165 +166,162 @@ const resendVerificationEmail = async (req, res) => {
             message,
         });
 
+        await logAuditEvent('user_resent_verification_email', { type: 'user', id: user._id }, 'info', {}, {}, req);
         res.status(200).json({ message: 'Verification email resent. Please check your inbox.' });
 
     } catch (error) {
         console.error('Resend Verification Email Error:', error);
+        await logAuditEvent('user_resend_verification_error', {type: 'system'}, 'error', {}, {error: error.message, attemptEmail: email}, req);
         res.status(500).json({ message: 'Server error resending verification email.' });
     }
 };
 
-
-// loginUser - bez zmian (już zaimplementowany)
 const loginUser = async (req, res) => {
-  const { email, password } = req.body;
-
-  try {
-    if (!email || !password) {
-       return res.status(400).json({ message: 'Please provide email and password' });
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
     }
-    const user = await User.findOne({ email });
-    if (!user) {
-         return res.status(401).json({ message: 'Invalid email or password' });
-    }
-    if (!user.isEmailVerified) {
-        return res.status(403).json({
-            message: 'Please verify your email address before logging in. You can request a new verification link.',
-            emailNotVerified: true
-        });
-    }
-    if (user.isBanned) {
-        return res.status(403).json({
-            message: `Your account has been banned. Reason: ${user.banReason || 'Not specified'}. Please contact support.`,
-            accountBanned: true
-        });
-    }
-    const isMatch = await user.comparePassword(password);
-    if (isMatch) {
-      const userResponse = await User.findById(user._id);
-      res.json({
-        _id: userResponse._id,
-        username: userResponse.username,
-        email: userResponse.email,
-        profile: userResponse.profile,
-        role: userResponse.role,
-        isTestAccount: userResponse.isTestAccount,
-        token: generateToken(userResponse._id),
-      });
-    } else {
-      res.status(401).json({ message: 'Invalid email or password' });
-    }
-  } catch (error) {
-    console.error('Login Error:', error);
-    res.status(500).json({ message: 'Server Error during login' });
-  }
-};
-
-
-// --- NOWE FUNKCJE DLA RESETU HASŁA ---
-
-// @desc    Forgot password - send reset token
-// @route   POST /api/auth/forgot-password
-// @access  Public
-const forgotPassword = async (req, res) => {
-    const { email } = req.body;
-    if (!email) {
-        return res.status(400).json({ message: 'Please provide an email address.' });
-    }
+    const { email, password } = req.body;
 
     try {
-        const user = await User.findOne({ email });
+        const user = await User.findOne({ email, isDeleted: false });
+
         if (!user) {
-            // Nie informuj bezpośrednio, że użytkownik nie istnieje (ze względów bezpieczeństwa)
-            return res.status(200).json({ message: 'If an account with that email exists, a password reset link has been sent.' });
+            await logAuditEvent('user_login_failed', { type: 'system' }, 'warn', {}, { attemptEmail: email, reason: 'User not found or deleted' }, req);
+            return res.status(401).json({ message: 'Invalid email or password' });
+        }
+        if (!user.isEmailVerified) {
+            await logAuditEvent('user_login_failed', { type: 'user', id: user._id }, 'warn', {}, { reason: 'Email not verified' }, req);
+            return res.status(403).json({
+                message: 'Please verify your email address before logging in. You can request a new verification link.',
+                emailNotVerified: true
+            });
+        }
+        if (user.isBanned) {
+            await logAuditEvent('user_login_failed', { type: 'user', id: user._id }, 'warn', {}, { reason: 'Account banned' }, req);
+            return res.status(403).json({
+                message: `Your account has been banned. Reason: ${user.banReason || 'Not specified'}. Please contact support.`,
+                accountBanned: true
+            });
         }
 
-        const { token: resetToken, hashedToken: passwordResetToken } = createAndHashToken();
-        user.passwordResetToken = passwordResetToken;
-        user.passwordResetTokenExpires = Date.now() + 10 * 60 * 1000; // Token ważny 10 minut
-        await user.save({ validateBeforeSave: false });
+        const isMatch = await user.comparePassword(password);
 
-        // URL do resetowania hasła na frontendzie (frontend obsłuży formularz zmiany hasła)
-        // lub bezpośredni link do API, który potem przekieruje
-        const resetURL = `${process.env.FRONTEND_URL || req.protocol + '://' + req.get('host')}/reset-password?token=${resetToken}`;
-        // Dla testów API można użyć: `${req.protocol}://${req.get('host')}/api/auth/reset-password/${resetToken}`
-
-        const message = `
-            Witaj ${user.username},\n\n
-            Otrzymaliśmy prośbę o zresetowanie hasła dla Twojego konta. Jeśli to Ty, kliknij w poniższy link (ważny przez 10 minut):\n
-            ${resetURL}\n\n
-            Jeśli to nie Ty prosiłeś o zmianę hasła, zignoruj tę wiadomość. Twoje hasło pozostanie niezmienione.\n\n
-            Pozdrawiamy,\nZespół Social App
-        `;
-
-        await sendEmail({
-            email: user.email,
-            subject: 'Reset Hasła w Social App',
-            message,
-        });
-
-        res.status(200).json({ message: 'If an account with that email exists, a password reset link has been sent.' });
-
+        if (isMatch) {
+            await logAuditEvent('user_login_success', { type: 'user', id: user._id }, 'info', {}, {}, req);
+            // Nie ma potrzeby ponownego User.findById, req.user z 'protect' byłby lepszy, ale tu nie ma 'protect'
+            // Model user po findOne jest wystarczający, o ile nie wybieraliśmy specyficznych pól.
+            res.json({
+                _id: user._id,
+                username: user.username,
+                email: user.email,
+                profile: user.profile,
+                role: user.role,
+                isTestAccount: user.isTestAccount,
+                token: generateToken(user._id),
+            });
+        } else {
+            await logAuditEvent('user_login_failed', { type: 'user', id: user._id }, 'warn', {}, { reason: 'Invalid password' }, req);
+            res.status(401).json({ message: 'Invalid email or password' });
+        }
     } catch (error) {
-        console.error('Forgot Password Error:', error);
-        // W przypadku błędu, nie informuj o szczegółach, ale zaloguj
-         // Aby uniknąć wycieku informacji, nawet przy błędzie serwera można zwrócić ogólny komunikat
-        res.status(200).json({ message: 'If an account with that email exists and an error occurred, we are looking into it. Please try again later.' });
-        // LUB dla developmentu: res.status(500).json({ message: 'Server error processing forgot password request.' });
+        console.error('Login Error:', error);
+        await logAuditEvent('user_login_error', { type: 'system' }, 'error', {}, { error: error.message, attemptEmail: email }, req);
+        res.status(500).json({ message: 'Server Error during login' });
     }
 };
 
-// @desc    Reset password using token
-// @route   PUT /api/auth/reset-password/:token
-// @access  Public
+const forgotPassword = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+    const { email } = req.body;
+
+    try {
+        const user = await User.findOne({ email, isDeleted: false });
+
+        if (user) {
+            if (!user.isEmailVerified) {
+                 await logAuditEvent('user_forgot_password_attempt_unverified_email', { type: 'user', id: user._id }, 'info', {}, {}, req);
+                 // Nadal zwracamy ogólny komunikat, aby nie ujawniać statusu konta
+                 return res.status(200).json({ message: 'If an account with that email exists and is active, a password reset link has been sent.' });
+            }
+            if (user.isBanned) {
+                await logAuditEvent('user_forgot_password_attempt_banned_account', { type: 'user', id: user._id }, 'info', {}, {}, req);
+                return res.status(200).json({ message: 'If an account with that email exists and is active, a password reset link has been sent.' }); // Ogólny komunikat
+            }
+
+            const { token: resetToken, hashedToken: passwordResetToken } = createAndHashToken();
+            user.passwordResetToken = passwordResetToken;
+            user.passwordResetTokenExpires = Date.now() + 10 * 60 * 1000;
+            await user.save({ validateBeforeSave: false });
+
+            const resetURL = `${process.env.FRONTEND_URL || req.protocol + '://' + req.get('host')}/reset-password?token=${resetToken}`;
+            const message = `Witaj ${user.username},\n\nOtrzymaliśmy prośbę o zresetowanie hasła dla Twojego konta...`;
+
+            await sendEmail({ email: user.email, subject: 'Reset Hasła w Social App', message });
+            await logAuditEvent('user_forgot_password_request_sent', { type: 'user', id: user._id }, 'info', {}, {}, req);
+        } else {
+            await logAuditEvent('user_forgot_password_attempt_nonexistent_email', { type: 'system' }, 'info', {}, { attemptEmail: email }, req);
+        }
+        // Zawsze zwracaj ten sam komunikat, aby nie ujawniać, czy email istnieje w bazie
+        res.status(200).json({ message: 'If an account with that email exists and is active, a password reset link has been sent.' });
+    } catch (error) {
+        console.error('Forgot Password Error:', error);
+        await logAuditEvent('user_forgot_password_error', {type: 'system'}, 'error', {}, {error: error.message, attemptEmail: email}, req);
+        // Nawet przy błędzie serwera, dla bezpieczeństwa można zwrócić ten sam ogólny komunikat
+        res.status(200).json({ message: 'If an account with that email exists and is active, and an error occurred processing your request, we are looking into it.' });
+    }
+};
+
 const resetPassword = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
     const { password } = req.body;
     const token = req.params.token;
 
-    if (!password || password.length < 6) {
-        return res.status(400).json({ message: 'Password must be at least 6 characters long.' });
-    }
-
     try {
         const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
-
         const user = await User.findOne({
             passwordResetToken: hashedToken,
-            passwordResetTokenExpires: { $gt: Date.now() }
-        }).select('+password'); // Musimy wybrać hasło, aby je zmodyfikować i zapisać
+            passwordResetTokenExpires: { $gt: Date.now() },
+            isDeleted: false,
+            isBanned: false
+        }).select('+password'); // Potrzebujemy hasła do jego nadpisania
 
         if (!user) {
-            return res.status(400).json({ message: 'Invalid or expired password reset token. Please request a new one.' });
+            await logAuditEvent('user_password_reset_failed', { type: 'system' }, 'warn', {}, { reason: 'Invalid/expired token or inactive/deleted/banned user', tokenAttempt: token }, req);
+            return res.status(400).json({ message: 'Invalid or expired password reset token, or account is inactive. Please request a new one.' });
         }
 
-        // Ustaw nowe hasło (hook pre-save w User.js je zahashuje)
         user.password = password;
         user.passwordResetToken = undefined;
         user.passwordResetTokenExpires = undefined;
-        // Dodatkowo, jeśli użytkownik resetuje hasło, można uznać jego email za zweryfikowany, jeśli jeszcze nie był
-        // if (!user.isEmailVerified) user.isEmailVerified = true;
-        await user.save();
+        if (!user.isEmailVerified) user.isEmailVerified = true;
 
-        // TODO: Rozważ unieważnienie wszystkich istniejących sesji/tokenów JWT dla tego użytkownika
+        await user.save(); // Hook pre-save zahashuje nowe hasło
 
-        // Można automatycznie zalogować użytkownika i zwrócić nowy token JWT
-        // const jwtToken = generateToken(user._id);
-        // res.status(200).json({ message: 'Password reset successfully. You are now logged in.', token: jwtToken, user: { _id: user._id, username: user.username, email: user.email } });
+        // KONCEPCYJNE - miejsce na blacklistowanie starych tokenów JWT użytkownika
+        // await BlacklistService.invalidateUserTokens(user._id);
 
+        await logAuditEvent('user_password_reset_success', { type: 'user', id: user._id }, 'admin_action', {}, {}, req); // admin_action, bo to krytyczna zmiana
         res.status(200).json({ message: 'Password reset successfully. You can now log in with your new password.' });
 
     } catch (error) {
         console.error('Reset Password Error:', error);
+        await logAuditEvent('user_password_reset_error', { type: 'system' }, 'error', {}, { error: error.message, tokenAttempt: token }, req);
         res.status(500).json({ message: 'Server error resetting password.' });
     }
 };
-
 
 module.exports = {
     registerUser,
     loginUser,
     verifyEmail,
     resendVerificationEmail,
-    forgotPassword, // Dodane
-    resetPassword   // Dodane
+    forgotPassword,
+    resetPassword
 };
