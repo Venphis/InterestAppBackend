@@ -11,7 +11,8 @@ const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const messageRoutes = require('./routes/messageRoutes');
-const friendshipRoutes = require('./routes/friendshipRoutes'); // <-- Nowy import
+const friendshipRoutes = require('./routes/friendshipRoutes');
+const adminAuthRoutes = require('./routes/adminAuthRoutes'); // <-- NOWY IMPORT
 
 dotenv.config();
 connectDB();
@@ -25,24 +26,25 @@ app.get('/', (req, res) => {
 });
 
 // Użycie Route'ów
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes); // Zawiera teraz /profile, /search, /profile/interests, /interests
+app.use('/api/auth', authRoutes); // Dla zwykłych użytkowników
+app.use('/api/users', userRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/messages', messageRoutes);
-app.use('/api/friendships', friendshipRoutes); // <-- Nowe użycie
+app.use('/api/friendships', friendshipRoutes);
 
-// --- Konfiguracja Serwera HTTP i Socket.IO ---
-const httpServer = http.createServer(app); // Stwórz serwer HTTP z aplikacji Express
-const io = new Server(httpServer, { // Utwórz instancję serwera Socket.IO
-  pingTimeout: 60000, // Czas bez aktywności przed rozłączeniem
+// --- Admin Routes ---
+app.use('/api/admin/auth', adminAuthRoutes); // <-- NOWE UŻYCIE (dla logowania admina)
+// TODO: Później dodamy tutaj /api/admin/users, /api/admin/reports itp.
+
+
+// Konfiguracja Serwera HTTP i Socket.IO (bez zmian na razie)
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {
+  pingTimeout: 60000,
   cors: {
-    origin: "*", // W produkcji ustaw konkretny adres frontendu! Np. adres Twojej aplikacji lub localhost podczas testów
-    // credentials: true // Jeśli używasz ciasteczek/sesji
+    origin: "*", // W produkcji ustaw konkretny adres frontendu!
   },
 });
-
-// Mapa do przechowywania online użytkowników { userId: socketId }
-let onlineUsers = {};
 
 io.on("connection", (socket) => {
   console.log("Connected to socket.io:", socket.id);
@@ -115,4 +117,4 @@ io.on("connection", (socket) => {
 // --- Uruchomienie Serwera ---
 const PORT = process.env.PORT || 5000; // Użyj portu z .env lub domyślnie 5000
 
-httpServer.listen(PORT, () => console.log(`Server running on port ${PORT}`)); // Uruchom serwer HTTP (który zawiera Express i Socket.IO)
+httpServer.listen(PORT, () => console.log(`Server running on PORT ${PORT} in ${process.env.NODE_ENV} mode`));
