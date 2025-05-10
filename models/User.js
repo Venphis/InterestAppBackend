@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 
 const UserSchema = new mongoose.Schema({
-  username: { // Używane do logowania, unikalne
+  username: {
     type: String,
     required: [true, 'Username is required'],
     unique: true,
@@ -21,53 +21,43 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Password is required'],
     minlength: 6,
-    select: false, // Domyślnie nie zwracaj hasła w zapytaniach
+    select: false,
   },
   profile: {
-    displayName: { // Nazwa wyświetlana na profilu (może być inna niż username)
+    displayName: {
       type: String,
       trim: true,
-      default: function() { return this.username; } // Domyślnie username
+      default: function() { return this.username; }
     },
-    avatarUrl: { type: String, default: '' }, // Zdjęcie profilowe (link)
+    avatarUrl: { type: String, default: '' },
     gender: {
       type: String,
-      enum: ['male', 'female', 'other', 'prefer_not_to_say', null], // Płeć
+      enum: ['male', 'female', 'other', 'prefer_not_to_say', null],
       default: null
     },
-    birthDate: { type: Date, default: null }, // Data urodzenia (do obliczenia wieku)
-    location: { type: String, trim: true, default: '' }, // Miejscowość
-    bio: { type: String, default: '' }, // Opis profilu
-    broadcastMessage: { type: String, default: '' } // Wiadomość rozgłoszeniowa
+    birthDate: { type: Date, default: null },
+    location: { type: String, trim: true, default: '' },
+    bio: { type: String, default: '' },
+    broadcastMessage: { type: String, default: '' }
   },
-  // Usunięto pole: friends: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
-  // Znajomości będą zarządzane przez model Friendship
-  // Zainteresowania będą zarządzane przez model UserInterest
+  role: { // Rola zwykłego użytkownika (np. 'user', 'premium_user')
+    type: String,
+    enum: ['user', 'premium_user'],
+    default: 'user'
+  },
+  isBanned: { type: Boolean, default: false },
+  banReason: { type: String, default: null },
+  bannedAt: { type: Date, default: null },
+  isTestAccount: { type: Boolean, default: false }, // Czy to konto testowe
+  isEmailVerified: { type: Boolean, default: false },
+  emailVerificationToken: { type: String, select: false },
+  emailVerificationTokenExpires: { type: Date, select: false },
+  passwordResetToken: { type: String, select: false },
+  passwordResetTokenExpires: { type: Date, select: false },
 }, {
-  timestamps: true, // Automatycznie dodaje createdAt i updatedAt
-  // Opcja wirtualna do obliczania wieku (jeśli potrzebujesz na serwerze)
-  //toJSON: { virtuals: true },
-  //toObject: { virtuals: true }
+  timestamps: true,
 });
 
-// Wirtualne pole dla wieku (obliczane dynamicznie) - przykład
-/*
-UserSchema.virtual('age').get(function() {
-  if (!this.profile.birthDate) {
-    return null;
-  }
-  const today = new Date();
-  const birthDate = new Date(this.profile.birthDate);
-  let age = today.getFullYear() - birthDate.getFullYear();
-  const m = today.getMonth() - birthDate.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
-    age--;
-  }
-  return age;
-});
-*/
-
-// Hashowanie hasła PRZED zapisem użytkownika (bez zmian)
 UserSchema.pre('save', async function(next) {
   if (!this.isModified('password')) {
     return next();
@@ -81,13 +71,10 @@ UserSchema.pre('save', async function(next) {
   }
 });
 
-// Metoda do porównywania hasła (bez zmian)
 UserSchema.methods.comparePassword = async function(candidatePassword) {
-    // Musimy pobrać hasło jawnie, bo ma select: false
-    const userWithPassword = await mongoose.model('User').findById(this._id).select('+password');
-    if (!userWithPassword) return false; // Na wszelki wypadek
-    return bcrypt.compare(candidatePassword, userWithPassword.password);
+  const userWithPassword = await mongoose.model('User').findById(this._id).select('+password');
+  if (!userWithPassword) return false;
+  return bcrypt.compare(candidatePassword, userWithPassword.password);
 };
-
 
 module.exports = mongoose.model('User', UserSchema);

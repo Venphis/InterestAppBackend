@@ -10,9 +10,12 @@ const { Server } = require("socket.io");
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const chatRoutes = require('./routes/chatRoutes');
+const reportRoutes = require('./routes/reportRoutes');
 const messageRoutes = require('./routes/messageRoutes');
 const friendshipRoutes = require('./routes/friendshipRoutes');
 const adminAuthRoutes = require('./routes/adminAuthRoutes'); // <-- NOWY IMPORT
+const adminUserRoutes = require('./routes/adminUserRoutes');
+const adminReportRoutes = require('./routes/adminReportRoutes');
 
 dotenv.config();
 connectDB();
@@ -31,9 +34,12 @@ app.use('/api/users', userRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/friendships', friendshipRoutes);
+app.use('/api/reports', reportRoutes);
 
 // --- Admin Routes ---
-app.use('/api/admin/auth', adminAuthRoutes); // <-- NOWE UŻYCIE (dla logowania admina)
+app.use('/api/admin/auth', adminAuthRoutes);
+app.use('/api/admin/users', adminUserRoutes);
+app.use('/api/admin/reports', adminReportRoutes); // <-- NOWE UŻYCIE (dla logowania admina)
 // TODO: Później dodamy tutaj /api/admin/users, /api/admin/reports itp.
 
 
