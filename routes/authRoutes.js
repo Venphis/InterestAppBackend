@@ -4,15 +4,19 @@ const {
     registerUser,
     loginUser,
     verifyEmail,
-    resendVerificationEmail
+    resendVerificationEmail,
+    forgotPassword, // Dodane
+    resetPassword   // Dodane
 } = require('../controllers/authController');
 const router = express.Router();
 
 router.post('/register', registerUser);
 router.post('/login', loginUser);
-router.get('/verify-email/:token', verifyEmail); // :token to parametr URL
+router.get('/verify-email/:token', verifyEmail);
 router.post('/resend-verification-email', resendVerificationEmail);
 
-// TODO: Dodaj trasy dla /forgot-password i /reset-password/:token
+// Nowe trasy dla resetu hasła
+router.post('/forgot-password', forgotPassword);
+router.put('/reset-password/:token', resetPassword); // PUT, bo aktualizujemy zasób (hasło użytkownika)
 
 module.exports = router;
