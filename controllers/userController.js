@@ -2,9 +2,10 @@
 const User = require('../models/User');
 const UserInterest = require('../models/UserInterest');
 const Interest = require('../models/Interest'); 
-const logAuditEvent = require('../../utils/auditLogger'); // Dodaj, jeśli potrzebne
+const logAuditEvent = require('../utils/auditLogger'); // Dodaj, jeśli potrzebne
 const fs = require('fs'); // Do usuwania starych avatarów
 const path = require('path');
+const { validationResult } = require('express-validator');
 
 // @desc    Get current user profile (optionally populated)
 // @route   GET /api/users/profile
@@ -20,6 +21,8 @@ const getUserProfile = async (req, res) => {
     const userInterests = await UserInterest.find({ userId: req.user._id })
                                             .populate('interestId', 'name category'); // Pobierz nazwę i kategorię zainteresowania
 
+
+
     // Zwróć profil razem z zainteresowaniami
     res.json({
         ...req.user.toObject(), // Konwertuj dokument Mongoose na zwykły obiekt
@@ -30,8 +33,8 @@ const getUserProfile = async (req, res) => {
         }))
     });
   } catch (error) {
-    console.error('Get Profile Error:', error);
-    res.status(500).json({ message: 'Server Error getting profile' });
+    console.error(`[userController.js] ERROR in getUserProfile for user ${req.user ? req.user._id : 'UNKNOWN'}:`, error);
+        next(error);
   }
 };
 
@@ -312,7 +315,6 @@ module.exports = {
     getUserProfile,
     updateUserProfile,
     findUsers,
-    getAllInterests, // Dodane
     addUserInterest, // Dodane
     updateUserInterest, // Dodane
     removeUserInterest, // Dodane

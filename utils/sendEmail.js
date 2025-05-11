@@ -36,12 +36,12 @@ const sendEmail = async (options) => {
 
   // 2) Zdefiniuj opcje emaila
   const mailOptions = {
-    from: process.env.EMAIL_FROM || 'Social App <no-reply@socialapp.com>', // Adres nadawcy
-    to: options.email, // Adres odbiorcy
-    subject: options.subject, // Temat emaila
-    text: options.message, // Czysty tekst
-    html: options.htmlMessage || options.message, // Wersja HTML (opcjonalna)
-  };
+  from: `${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_FROM_ADDRESS}>` || 'Social App <no-reply@socialapp.com>',
+  to: options.email,
+  subject: options.subject, // Temat może też zawierać nazwę aplikacji
+  text: options.message,    // W treści wiadomości możesz używać process.env.APP_NAME
+  html: options.htmlMessage || options.message,
+};
 
   // 3) Wyślij email
   try {

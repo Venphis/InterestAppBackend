@@ -2,11 +2,11 @@
 const express = require('express');
 const { body, param, query } = require('express-validator');
 const { protect } = require('../middleware/authMiddleware');
-const { uploadAvatar } = require('../../middleware/uploadMiddleware');
+const { uploadAvatar } = require('../middleware/uploadMiddleware');
 const {
     getUserProfile, updateUserProfile, updateUserAvatar, findUsers,
     addUserInterest, updateUserInterest, removeUserInterest
-} = require('../../controllers/userController');
+} = require('../controllers/userController');
 const router = express.Router();
 
 router.use(protect);

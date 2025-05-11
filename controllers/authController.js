@@ -58,12 +58,12 @@ const registerUser = async (req, res) => {
             Dziękujemy za rejestrację! Aby aktywować swoje konto, kliknij w poniższy link (ważny przez 10 minut):\n
             ${verificationURL}\n\n
             Jeśli to nie Ty zakładałeś konto, zignoruj tę wiadomość.\n\n
-            Pozdrawiamy,\nZespół Social App
+            Pozdrawiamy,\nZespół ${process.env.APP_NAME}
         `;
 
         await sendEmail({
             email: user.email,
-            subject: 'Aktywacja Konta w Social App',
+            subject: `Aktywacja Konta w ${process.env.APP_NAME}`,
             message,
         });
 
@@ -158,11 +158,11 @@ const resendVerificationEmail = async (req, res) => {
         await user.save({ validateBeforeSave: false });
 
         const verificationURL = `${req.protocol}://${req.get('host')}/api/auth/verify-email/${verificationToken}`;
-        const message = `Witaj ${user.username},\n\nKliknij w poniższy link, aby dokończyć aktywację konta (ważny przez 10 minut):\n${verificationURL}\n\nPozdrawiamy,\nZespół Social App`;
+        const message = `Witaj ${user.username},\n\nKliknij w poniższy link, aby dokończyć aktywację konta (ważny przez 10 minut):\n${verificationURL}\n\nPozdrawiamy,\n${process.env.EMAIL_FROM_NAME}`;
 
         await sendEmail({
             email: user.email,
-            subject: 'Ponowna Aktywacja Konta w Social App',
+            subject: `Ponowna Aktywacja Konta w ${process.env.APP_NAME}`,
             message,
         });
 
@@ -260,7 +260,7 @@ const forgotPassword = async (req, res) => {
             const resetURL = `${process.env.FRONTEND_URL || req.protocol + '://' + req.get('host')}/reset-password?token=${resetToken}`;
             const message = `Witaj ${user.username},\n\nOtrzymaliśmy prośbę o zresetowanie hasła dla Twojego konta...`;
 
-            await sendEmail({ email: user.email, subject: 'Reset Hasła w Social App', message });
+            await sendEmail({ email: user.email, subject: `Reset Hasła w ${process.env.APP_NAME}`, message });
             await logAuditEvent('user_forgot_password_request_sent', { type: 'user', id: user._id }, 'info', {}, {}, req);
         } else {
             await logAuditEvent('user_forgot_password_attempt_nonexistent_email', { type: 'system' }, 'info', {}, { attemptEmail: email }, req);

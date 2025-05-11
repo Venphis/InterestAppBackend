@@ -2,7 +2,7 @@
 const AdminUser = require('../models/AdminUser');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt'); // Potrzebne do porównania starego hasła
-const logAuditEvent = require('../../utils/auditLogger'); // Zakładając, że plik jest w utils
+const logAuditEvent = require('../utils/auditLogger'); // Zakładając, że plik jest w utils
 require('dotenv').config();
 
 const generateAdminToken = (id, role) => {

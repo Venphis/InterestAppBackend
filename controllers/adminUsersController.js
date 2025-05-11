@@ -8,8 +8,8 @@ const UserInterest = require('../models/UserInterest');
 const Report = require('../models/Report');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-const sendEmail = require('../../utils/sendEmail');
-const logAuditEvent = require('../../utils/auditLogger');
+const sendEmail = require('../utils/sendEmail');
+const logAuditEvent = require('../utils/auditLogger');
 const mongoose = require('mongoose');
 require('dotenv').config();
 
@@ -112,15 +112,15 @@ const banUser = async (req, res) => {
         // WYŚLIJ EMAIL O BANIE
         const emailMessage = `
             Witaj ${user.username},\n\n
-            Z przykrością informujemy, że Twoje konto w Social App zostało zbanowane.\n
+            Z przykrością informujemy, że Twoje konto w ${process.env.APP_NAME} zostało zbanowane.\n
             Powód: ${banReason}\n\n
             Jeśli uważasz, że to pomyłka, skontaktuj się z administratorem.\n\n
-            Zespół Social App
+            ${process.env.EMAIL_FROM_NAME}
         `;
         try {
             await sendEmail({
                 email: user.email,
-                subject: 'Twoje konto w Social App zostało zbanowane',
+                subject: `Twoje konto w ${process.env.APP_NAME} zostało zbanowane`,
                 message: emailMessage,
             });
         } catch (emailError) {
@@ -171,14 +171,14 @@ const unbanUser = async (req, res) => {
          // WYŚLIJ EMAIL O ODBANOWANIU
         const emailMessage = `
             Witaj ${user.username},\n\n
-            Informujemy, że Twoje konto w Social App zostało odbanowane.\n
+            Informujemy, że Twoje konto w ${process.env.APP_NAME} zostało odbanowane.\n
             Możesz ponownie korzystać z aplikacji.\n\n
-            Zespół Social App
+            ${process.env.EMAIL_FROM_NAME}
         `;
         try {
             await sendEmail({
                 email: user.email,
-                subject: 'Twoje konto w Social App zostało odbanowane',
+                subject: `Twoje konto w ${process.env.APP_NAME} zostało odbanowane`,
                 message: emailMessage,
             });
         } catch (emailError) {
