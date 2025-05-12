@@ -9,7 +9,6 @@ const protectAdmin = async (req, res, next) => {
         !req.headers.authorization ||
         !req.headers.authorization.startsWith('Bearer ') // Ważna spacja po 'Bearer '
     ) {
-        // console.log('[AdminAuthMiddleware] No/Invalid Authorization Header'); // Log dla debugowania
         return res
             .status(401)
             .json({ message: 'Not authorized, no admin token or malformed header' }); // Ujednolicony komunikat
@@ -19,14 +18,11 @@ const protectAdmin = async (req, res, next) => {
 
     // Jeśli token jest pusty po split (np. tylko "Bearer ")
     if (!token) {
-        // console.log('[AdminAuthMiddleware] Empty token after split'); // Log dla debugowania
         return res.status(401).json({ message: 'Not authorized, no admin token provided' });
     }
 
     try {
-        // console.log('[AdminAuthMiddleware] Verifying Token:', token);
         const secretToUse = process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET;
-        // console.log('[AdminAuthMiddleware] Secret used for verification:', secretToUse);
 
         if (typeof secretToUse !== 'string' || secretToUse.length < 16) {
             console.error('[AdminAuthMiddleware] JWT_ADMIN_SECRET is invalid or too short:', secretToUse);
@@ -34,23 +30,19 @@ const protectAdmin = async (req, res, next) => {
         }
 
         const decoded = jwt.verify(token, secretToUse);
-        // console.log('[AdminAuthMiddleware] DECODED ADMIN TOKEN PAYLOAD:', decoded);
 
         if (decoded.type !== 'admin') {
-            // console.warn('[AdminAuthMiddleware] Token is not of type "admin". Decoded type:', decoded.type);
             // Zgodnie z sugestią O3 i Twoją asercją
             return res.status(401).json({ message: 'token is not an admin token' });
         }
 
         const admin = await AdminUser.findById(decoded.id).select('-password');
         if (!admin || !admin.isActive) {
-            // console.warn(`[AdminAuthMiddleware] Admin user ${decoded.id} not found or inactive.`);
             return res.status(401).json({ message: 'Not authorized, admin not found or inactive' });
         }
         req.adminUser = admin;
         next();
     } catch (error) {
-        // console.error('[AdminAuthMiddleware] Error Verifying Admin Token:', error.name, error.message);
         if (error instanceof jwt.JsonWebTokenError) {
             return res.status(401).json({ message: `Not authorized, admin token error: ${error.message}` });
         }
