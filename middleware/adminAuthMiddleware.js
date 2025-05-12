@@ -1,66 +1,77 @@
 // middleware/adminAuthMiddleware.js
 const jwt = require('jsonwebtoken');
-const AdminUser = require('../models/AdminUser'); // Użyj modelu AdminUser
-require('dotenv').config();
+const AdminUser = require('../models/AdminUser');
+// require('dotenv').config(); // Niepotrzebne, jeśli NODE_OPTIONS działa
 
-// Middleware do ochrony tras tylko dla zalogowanych adminów
 const protectAdmin = async (req, res, next) => {
-  let token;
+    // 1. Sprawdź, czy nagłówek Authorization istnieje i ma poprawny format
+    if (
+        !req.headers.authorization ||
+        !req.headers.authorization.startsWith('Bearer ') // Ważna spacja po 'Bearer '
+    ) {
+        // console.log('[AdminAuthMiddleware] No/Invalid Authorization Header'); // Log dla debugowania
+        return res
+            .status(401)
+            .json({ message: 'Not authorized, no admin token or malformed header' }); // Ujednolicony komunikat
+    }
 
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith('Bearer')
-  ) {
+    const token = req.headers.authorization.split(' ')[1];
+
+    // Jeśli token jest pusty po split (np. tylko "Bearer ")
+    if (!token) {
+        // console.log('[AdminAuthMiddleware] Empty token after split'); // Log dla debugowania
+        return res.status(401).json({ message: 'Not authorized, no admin token provided' });
+    }
+
     try {
-      token = req.headers.authorization.split(' ')[1];
+        // console.log('[AdminAuthMiddleware] Verifying Token:', token);
+        const secretToUse = process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET;
+        // console.log('[AdminAuthMiddleware] Secret used for verification:', secretToUse);
 
-      // Weryfikuj token używając JWT_ADMIN_SECRET jeśli jest, inaczej JWT_SECRET
-      // Ważne: upewnij się, że payload tokena admina zawiera np. 'type: admin' lub inną identyfikację
-      const decoded = jwt.verify(token, process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET);
+        if (typeof secretToUse !== 'string' || secretToUse.length < 16) {
+            console.error('[AdminAuthMiddleware] JWT_ADMIN_SECRET is invalid or too short:', secretToUse);
+            return res.status(500).json({ message: 'Internal server error: JWT admin secret misconfiguration.' });
+        }
 
-      // Sprawdź, czy token jest typu 'admin' (jeśli dodałeś 'type' przy generowaniu)
-      if (decoded.type !== 'admin') {
-          return res.status(401).json({ message: 'Not authorized, token is not an admin token' });
-      }
+        const decoded = jwt.verify(token, secretToUse);
+        // console.log('[AdminAuthMiddleware] DECODED ADMIN TOKEN PAYLOAD:', decoded);
 
-      // req.adminUser będzie zawierać dane z tokena (id, role)
-      // Można pobrać pełny obiekt admina z bazy, jeśli potrzebne od razu
-      const admin = await AdminUser.findById(decoded.id).select('-password');
-      if (!admin || !admin.isActive) {
-        return res.status(401).json({ message: 'Not authorized, admin not found or inactive' });
-      }
-      req.adminUser = admin; // Dołącz pełny obiekt admina (bez hasła) do requestu
+        if (decoded.type !== 'admin') {
+            // console.warn('[AdminAuthMiddleware] Token is not of type "admin". Decoded type:', decoded.type);
+            // Zgodnie z sugestią O3 i Twoją asercją
+            return res.status(401).json({ message: 'token is not an admin token' });
+        }
 
-      next();
+        const admin = await AdminUser.findById(decoded.id).select('-password');
+        if (!admin || !admin.isActive) {
+            // console.warn(`[AdminAuthMiddleware] Admin user ${decoded.id} not found or inactive.`);
+            return res.status(401).json({ message: 'Not authorized, admin not found or inactive' });
+        }
+        req.adminUser = admin;
+        next();
     } catch (error) {
-      console.error('Admin Auth Error:', error.message);
-      if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
-        return res.status(401).json({ message: 'Not authorized, token failed or expired' });
-      }
-      res.status(401).json({ message: 'Not authorized, token processing error' });
+        // console.error('[AdminAuthMiddleware] Error Verifying Admin Token:', error.name, error.message);
+        if (error instanceof jwt.JsonWebTokenError) {
+            return res.status(401).json({ message: `Not authorized, admin token error: ${error.message}` });
+        }
+        // Inne nieoczekiwane błędy
+        return res.status(500).json({ message: 'Not authorized, server error during admin token processing' });
     }
-  }
-
-  if (!token) {
-    res.status(401).json({ message: 'Not authorized, no token' });
-  }
 };
 
-// Middleware do sprawdzania konkretnej roli admina (np. 'superadmin')
-const authorizeAdminRole = (roles) => { // roles może być stringiem lub tablicą stringów
-  return (req, res, next) => {
-    if (!req.adminUser || !req.adminUser.role) {
-        return res.status(403).json({ message: 'Not authorized, admin role not found in request' });
-    }
-    const allowedRoles = Array.isArray(roles) ? roles : [roles];
-    if (!allowedRoles.includes(req.adminUser.role)) {
-      return res.status(403).json({
-        message: `Admin role '${req.adminUser.role}' is not authorized to access this route. Required: ${allowedRoles.join(' or ')}.`
-      });
-    }
-    next();
-  };
+const authorizeAdminRole = (roles) => {
+    return (req, res, next) => {
+        if (!req.adminUser || !req.adminUser.role) {
+            return res.status(403).json({ message: 'Not authorized, admin role not found in request' });
+        }
+        const allowedRoles = Array.isArray(roles) ? roles : [roles];
+        if (!allowedRoles.includes(req.adminUser.role)) {
+          return res.status(403).json({
+            message: `Admin role '${req.adminUser.role}' is not authorized to access this route. Required: ${allowedRoles.join(' or ')}.`
+          });
+        }
+        next();
+      };
 };
-
 
 module.exports = { protectAdmin, authorizeAdminRole };

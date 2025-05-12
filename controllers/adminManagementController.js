@@ -1,5 +1,6 @@
 // controllers/adminManagementController.js
 const AdminUser = require('../models/AdminUser');
+const { validationResult } = require('express-validator');
 
 // @desc    Create a new admin user by Superadmin
 // @route   POST /api/admin/management/admins

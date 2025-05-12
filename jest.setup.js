@@ -25,6 +25,7 @@ beforeAll(async () => {
     }
 });
 
+// jest.setup.js
 afterAll(async () => {
     await mongoose.disconnect();
     await mongod.stop();

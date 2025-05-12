@@ -12,6 +12,7 @@ const sendEmail = require('../utils/sendEmail');
 const logAuditEvent = require('../utils/auditLogger');
 const mongoose = require('mongoose');
 require('dotenv').config();
+const { validationResult } = require('express-validator');
 
 // Helper do generowania tokenu JWT dla zwykłego użytkownika (używany przy generowaniu tokenu testowego)
 const generateUserToken = (id) => {

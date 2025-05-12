@@ -23,7 +23,9 @@ router.post('/login', [
 ], loginUser);
 
 router.get('/verify-email/:token', [
-    param('token').isHexadecimal().isLength({ min: 64, max: 64 }).withMessage('Invalid token format')
+    param('token')
+        .isHexadecimal().withMessage('Invalid token format (not hex)') // Bardziej szczegółowy komunikat
+        .isLength({ min: 64, max: 64 }).withMessage('Token must be 64 characters long (hex)')
 ], verifyEmail);
 
 router.post('/resend-verification-email', [
@@ -35,7 +37,9 @@ router.post('/forgot-password', [
 ], forgotPassword);
 
 router.put('/reset-password/:token', [
-    param('token').isHexadecimal().isLength({ min: 64, max: 64 }).withMessage('Invalid token format'),
+    param('token')
+        .isHexadecimal().withMessage('Invalid token format (not hex)')
+        .isLength({ min: 64, max: 64 }).withMessage('Token must be 64 characters long (hex)'),
     body('password').isLength({ min: 6, max: 100 }).withMessage('Password must be between 6 and 100 characters')
 ], resetPassword);
 

@@ -1,6 +1,7 @@
 // controllers/publicInterestController.js
 const Interest = require('../models/Interest');
 const InterestCategory = require('../models/InterestCategory');
+const { validationResult } = require('express-validator');
 
 const getPublicInterestCategories = async (req, res) => {
     const errors = validationResult(req);

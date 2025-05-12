@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt'); // Potrzebne do porównania starego hasła
 const logAuditEvent = require('../utils/auditLogger'); // Zakładając, że plik jest w utils
 require('dotenv').config();
+const { validationResult } = require('express-validator');
 
 const generateAdminToken = (id, role) => {
   return jwt.sign({ id, role, type: 'admin' }, process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET, {

@@ -1,5 +1,6 @@
 // controllers/adminAuditLogController.js
 const AuditLog = require('../models/AuditLog');
+const { validationResult } = require('express-validator');
 
 // @desc    Get all audit logs (paginated, filterable)
 // @route   GET /api/admin/audit-logs

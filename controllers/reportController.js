@@ -2,6 +2,7 @@
 const Report = require('../models/Report');
 const User = require('../models/User');
 const Message = require('../models/Message');
+const { validationResult } = require('express-validator');
 
 // @desc    Create a new report
 // @route   POST /api/reports

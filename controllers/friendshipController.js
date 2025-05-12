@@ -2,6 +2,7 @@
 const Friendship = require('../models/Friendship');
 const User = require('../models/User');
 const mongoose = require('mongoose'); // Potrzebne do ObjectId
+const { validationResult } = require('express-validator');
 
 // Helper function to ensure consistent user ID order (optional but good practice for unique index)
 const orderUserIds = (userId1, userId2) => {

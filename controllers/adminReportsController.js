@@ -1,5 +1,6 @@
 // controllers/adminReportsController.js
 const Report = require('../models/Report');
+const { validationResult } = require('express-validator');
 
 // @desc    Get all reports (paginated, filterable)
 // @route   GET /api/admin/reports

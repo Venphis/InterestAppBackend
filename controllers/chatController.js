@@ -2,6 +2,7 @@
 const Chat = require('../models/Chat');
 const Message = require('../models/Message');
 const User = require('../models/User');
+const { validationResult } = require('express-validator');
 
 // @desc    Create or access a chat between two users
 // @route   POST /api/chats

@@ -2,6 +2,7 @@
 const Interest = require('../models/Interest');
 const InterestCategory = require('../models/InterestCategory');
 const UserInterest = require('../models/UserInterest'); // Potrzebne do sprawdzenia powiązań
+const { validationResult } = require('express-validator');
 
 // createInterestCategory - bez zmian
 // getAllInterestCategories - bez zmian
