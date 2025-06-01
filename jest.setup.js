@@ -1,15 +1,12 @@
 // jest.setup.js (w głównym folderze projektu)
+require('dotenv').config({ path: '.env.test' });
+// console.log('[jest.setup.js] JWT_SECRET:', process.env.JWT_SECRET);
+// console.log('[jest.setup.js] JWT_ADMIN_SECRET:', process.env.JWT_ADMIN_SECRET);
+
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 
-// Mockuj sendEmail globalnie
-jest.mock('./utils/sendEmail', () => {
-    return {
-        __esModule: true,
-        default: jest.fn().mockResolvedValue(true),
-    };
-});
-// NIE POTRZEBUJESZ: const sendEmail = require('./utils/sendEmail'); tutaj
+jest.mock('./utils/sendEmail', () => jest.fn().mockResolvedValue(true));
 
 let mongod;
 
@@ -19,29 +16,22 @@ beforeAll(async () => {
     process.env.MONGO_URI_TEST = uri;
     try {
         await mongoose.connect(uri);
+        // console.log('[jest.setup.js] MongoDB Memory Server Connected. Mongoose readyState:', mongoose.connection.readyState);
     } catch (err) {
         console.error('[jest.setup.js] FATAL: Error connecting to in-memory test DB:', err);
         process.exit(1);
     }
 });
 
-// jest.setup.js
 afterAll(async () => {
+    // console.log('[jest.setup.js] afterAll: Disconnecting Mongoose...');
     await mongoose.disconnect();
+    // console.log('[jest.setup.js] afterAll: Stopping mongod...');
     await mongod.stop();
+    // console.log('[jest.setup.js] afterAll: MongoDB Memory Server stopped.');
 });
 
+// ZMIANA TUTAJ: Tylko czyszczenie mocków globalnie
 beforeEach(async () => {
-    const collections = mongoose.connection.collections;
-    for (const key in collections) {
-        const collection = collections[key];
-        await collection.deleteMany({});
-    }
-    // Wyczyść wszystkie mocki Jesta. To obejmie również mock sendEmail.
-    jest.clearAllMocks();
-    // LUB, jeśli chcesz być bardziej specyficzny i masz referencję do mocka:
-    // const sendEmailMock = require('./utils/sendEmail'); // Ten require pobierze mocka
-    // if (sendEmailMock && sendEmailMock.mockClear) {
-    //     sendEmailMock.mockClear();
-    // }
+    jest.clearAllMocks(); // Wyczyść wszystkie mocki Jesta
 });

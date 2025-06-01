@@ -404,6 +404,67 @@ const restoreUser = async (req, res) => {
     }
 };
 
+// @desc    Change a user's role
+// @route   PUT /api/admin/users/:userId/role
+// @access  Private (Superadmin only - zdefiniowane w trasie)
+const changeUserRole = async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { userId } = req.params;
+    const { role } = req.body;
+
+    // Sprawdzamy, czy rola występuje w enumie ze schematu User
+    // (zakładając, że User.schema.path('role').enumValues jest dostępne i poprawne)
+    const allowedRoles = User.schema.path('role').enumValues;
+    if (!allowedRoles || !allowedRoles.includes(role)) {
+        return res.status(400).json({ message: `Role "${role}" is not allowed or not defined in User schema. Allowed: ${allowedRoles ? allowedRoles.join(', ') : 'None'}` });
+    }
+
+    // Teoretycznie middleware authorizeAdminRole('superadmin') już to załatwia,
+    // ale dodatkowe sprawdzenie nie zaszkodzi, jeśli logikę uprawnień trzymamy też w kontrolerze.
+    // if (req.adminUser && req.adminUser.role !== 'superadmin') {
+    //    return res.status(403).json({ message: 'Only superadmins can change user roles.' });
+    // }
+
+    // Admin nie może zmienić roli samemu sobie przez ten endpoint (jeśli by to dotyczyło AdminUser)
+    // Tutaj zmieniamy rolę zwykłego użytkownika, więc to sprawdzenie nie jest konieczne w tej formie.
+
+    try {
+        const user = await User.findById(userId);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        if (user.isDeleted) {
+            return res.status(400).json({ message: 'Cannot change role of a deleted user.' });
+        }
+
+        const oldRole = user.role;
+        user.role = role;
+        await user.save({ validateBeforeSave: false }); // Zapisz bez walidacji innych pól
+
+        await logAuditEvent(
+            'admin_changed_user_role',
+            { type: 'admin', id: req.adminUser._id }, // req.adminUser z protectAdmin
+            'admin_action',
+            { type: 'user', id: userId },
+            { oldRole: oldRole, newRole: role, targetUsername: user.username },
+            req
+        );
+
+        // Zwracamy zaktualizowanego użytkownika (bez hasła itp.)
+        const userResponse = await User.findById(userId).select('-password -emailVerificationToken -passwordResetToken');
+        return res.status(200).json({ message: 'User role updated successfully', user: userResponse });
+
+    } catch (err) {
+        console.error('[adminUsersController.js] Admin Change User Role Error:', err);
+        next(err); // Przekaż do globalnego error handlera
+    }
+};
+
 
 module.exports = {
     getAllUsers,
@@ -414,5 +475,6 @@ module.exports = {
     createTestUser,
     generateTestUserToken,
     deleteUser,
-    restoreUser
+    restoreUser,
+    changeUserRole
 };

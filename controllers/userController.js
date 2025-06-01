@@ -87,30 +87,30 @@ const updateUserProfile = async (req, res) => {
 // @desc    Find users by username or display name
 // @route   GET /api/users/search?q=...
 // @access  Private
-const findUsers = async (req, res) => {
+const findUsers = async (req, res, next) => { // Dodano next
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
     }
-    const query = req.query.q;
-    if (!query) {
-        return res.status(400).json({ message: 'Search query "q" is required' });
-    }
+    const queryParam = req.query.q;
 
-    const keyword = {
-        $or: [
-            { username: { $regex: query, $options: 'i' } },
-            { 'profile.displayName': { $regex: query, $options: 'i' } }
-        ],
-        _id: { $ne: req.user._id },
-        isDeleted: false // --- ZMIANA ---
-    };
+    const keywordConditions = [
+        { username: { $regex: queryParam, $options: 'i' } },
+        { 'profile.displayName': { $regex: queryParam, $options: 'i' } }
+    ];
+
     try {
-        const users = await User.find(keyword).select('username email profile'); // Zwróć wybrane pola
+        const users = await User.find({
+            $or: keywordConditions,
+            _id: { $ne: req.user._id }, // Wyklucz samego siebie
+            isDeleted: false,           // --- POPRAWKA ---
+            isBanned: false             // --- POPRAWKA ---
+        }).select('username email profile');
+
         res.json(users);
     } catch (error) {
-        console.error('Search Users Error:', error);
-        res.status(500).json({ message: 'Server Error searching users' });
+        console.error('[userController.js] Search Users Error:', error);
+        next(error); // Przekaż do globalnego error handlera
     }
 };
 

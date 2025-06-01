@@ -1,52 +1,63 @@
 // tests/auth.test.js
 const request = require('supertest');
-const app = require('../server'); // Importuj 'app' z poprawionego server.js
-const User = require('../models/User');
-jest.mock('../utils/sendEmail', () => jest.fn().mockResolvedValue(true)); 
-const sendEmail = require('../utils/sendEmail'); // Importuj, aby móc na nim robić asercje
-const bcrypt = require('bcrypt');
-const crypto = require('crypto'); // Potrzebne do hashowania tokenów w teście
+const app = require('../server'); // Importuj 'app' z server.js
+const User = require('../models/User'); // Nadal potrzebne do asercji i specyficznych operacji na bazie
+const sendEmail = require('../utils/sendEmail'); // Mockowany w jest.setup.js
+const bcrypt = require('bcrypt'); // Potrzebny do sprawdzania hasła po resecie
+const crypto = require('crypto');
+const mongoose = require('mongoose'); // Potrzebny do new mongoose.Types.ObjectId()
+const { createUser, createVerifiedUser } = require('./helpers/factories'); // IMPORT HELPERÓW
 
-
-// Nie potrzebujemy już tutaj mongod, mongoose ani beforeAll/afterAll/beforeEach
-// dla bazy danych, ponieważ jest to obsługiwane globalnie przez jest.setup.js
+// Globalne beforeEach z jest.setup.js czyści mocki.
+// Czyszczenie kolekcji User będzie robione w każdym `describe` lub `beforeEach` w tym pliku.
 
 describe('Auth API - Registration', () => {
-    const validUser = {
-        username: 'testuserReg', // Inne nazwy dla różnych bloków describe
-        email: 'testreg@example.com',
+    const validUserCredentials = {
+        username: 'testuserReg_auth',
+        email: 'testreg_auth@example.com',
         password: 'password123',
     };
+
+    beforeEach(async () => {
+        // Czyść kolekcję User przed każdym testem rejestracji, aby uniknąć konfliktów
+        await mongoose.connection.collection('users').deleteMany({
+            $or: [
+                { email: validUserCredentials.email },
+                { username: validUserCredentials.username }
+            ]
+        });
+    });
 
     it('should register a new user successfully and call sendEmail', async () => {
         const res = await request(app)
             .post('/api/auth/register')
-            .send(validUser);
+            .send(validUserCredentials);
 
         expect(res.statusCode).toEqual(201);
         expect(res.body).toHaveProperty('message', 'User registered successfully. Please check your email to activate your account.');
 
-        const userInDb = await User.findOne({ email: validUser.email }).select('+emailVerificationToken');
+        const userInDb = await User.findOne({ email: validUserCredentials.email }).select('+emailVerificationToken');
         expect(userInDb).not.toBeNull();
-        expect(userInDb.username).toBe(validUser.username);
+        expect(userInDb.username).toBe(validUserCredentials.username);
         expect(userInDb.isEmailVerified).toBe(false);
         expect(userInDb.emailVerificationToken).toBeDefined();
         expect(userInDb.emailVerificationToken).not.toBeNull();
 
         expect(sendEmail).toHaveBeenCalledTimes(1);
         expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({
-            email: validUser.email,
-            subject: expect.stringContaining('Aktywacja Konta'),
-            message: expect.stringContaining('/api/auth/verify-email/') // Sprawdź, czy link jest w wiadomości
+            email: validUserCredentials.email,
+            subject: expect.stringContaining(`Aktywacja Konta w ${process.env.APP_NAME || 'Hello Beacon'}`),
+            message: expect.stringContaining('/api/auth/verify-email/')
         }));
     });
 
     it('should not register a user with an existing email', async () => {
-        await User.create(validUser);
+        await createUser(validUserCredentials); // Użyj fabryki do stworzenia użytkownika
         const res = await request(app)
             .post('/api/auth/register')
-            .send({ ...validUser, username: 'anotheruserReg' });
+            .send({ ...validUserCredentials, username: 'anotheruserReg_auth' });
         expect(res.statusCode).toEqual(400);
+        expect(res.body).toHaveProperty('message', 'User with this email or username already exists');
     });
 
     it('should return validation errors for invalid registration data', async () => {
@@ -55,25 +66,27 @@ describe('Auth API - Registration', () => {
             .send({ username: 'u', email: 'not-an-email', password: '123' });
         expect(res.statusCode).toEqual(400);
         expect(res.body).toHaveProperty('errors');
+        // Można dodać bardziej szczegółowe asercje, np.
+        // expect(res.body.errors.some(e => e.path === 'username' && e.msg.includes('3 characters'))).toBe(true);
     });
 });
 
 describe('Auth API - Email Verification', () => {
     let userToVerify;
-    let rawVerificationToken; // Niehashowany token, który byłby w URLu
+    let rawVerificationToken;
 
     beforeEach(async () => {
+        await mongoose.connection.collection('users').deleteMany({ email: 'verify_auth@example.com' });
         const tokenData = crypto.randomBytes(32).toString('hex');
-        rawVerificationToken = tokenData; // To jest to, co byłoby w linku
+        rawVerificationToken = tokenData;
         const hashedToken = crypto.createHash('sha256').update(tokenData).digest('hex');
 
-        userToVerify = await User.create({
-            username: 'verifyuser',
-            email: 'verify@example.com',
-            password: 'password123',
+        userToVerify = await createUser({ // Użyj fabryki
+            username: 'verifyuser_auth',
+            email: 'verify_auth@example.com',
             isEmailVerified: false,
             emailVerificationToken: hashedToken,
-            emailVerificationTokenExpires: new Date(Date.now() + 10 * 60 * 1000) // Ważny 10 minut
+            emailVerificationTokenExpires: new Date(Date.now() + 10 * 60 * 1000)
         });
     });
 
@@ -89,20 +102,17 @@ describe('Auth API - Email Verification', () => {
         expect(updatedUser.emailVerificationToken).toBeUndefined();
     });
 
-    it('should not verify email with an invalid token', async () => {
-        const res = await request(app)
-            .get(`/api/auth/verify-email/invalidtoken123`);
-        expect(res.statusCode).toEqual(400);
-        // "invalidtoken123" nie jest hex, więc pierwszy błąd powinien być od isHexadecimal()
-        expect(res.body.errors[0].msg).toBe('Invalid token format (not hex)');
-    });
+    it('should not verify email with an invalid token (format)', async () => {
+    const res = await request(app)
+        .get(`/api/auth/verify-email/invalidtoken123`);
+    expect(res.statusCode).toEqual(400);
+    expect(res.body.errors[0].msg).toBe('Token must be hexadecimal'); // Ten test powinien nadal przechodzić
+});
 
     it('should not verify email with an expired token', async () => {
-        // Ustaw token jako wygasły
         await User.updateOne({ _id: userToVerify._id }, {
-            emailVerificationTokenExpires: new Date(Date.now() - 1000) // Już wygasł
+            emailVerificationTokenExpires: new Date(Date.now() - 1000)
         });
-
         const res = await request(app)
             .get(`/api/auth/verify-email/${rawVerificationToken}`);
         expect(res.statusCode).toEqual(400);
@@ -112,27 +122,30 @@ describe('Auth API - Email Verification', () => {
 
 
 describe('Auth API - Resend Verification Email', () => {
-    it('should resend verification email for unverified user', async () => {
-        const unverifiedUser = await User.create({
-            username: 'resenduser', email: 'resend@example.com', password: 'password123', isEmailVerified: false
-        });
+    beforeEach(async () => {
+        await mongoose.connection.collection('users').deleteMany({ email: /resend_auth@example\.com$/ });
+    });
 
+    it('should resend verification email for unverified user', async () => {
+        const unverifiedUser = await createUser({ // Użyj fabryki
+            username: 'resenduser_auth', email: 'resend_auth@example.com', isEmailVerified: false
+        });
         const res = await request(app)
             .post('/api/auth/resend-verification-email')
             .send({ email: unverifiedUser.email });
 
         expect(res.statusCode).toEqual(200);
         expect(res.body).toHaveProperty('message', 'Verification email resent. Please check your inbox.');
-        expect(sendEmail).toHaveBeenCalledTimes(1); // sendEmail jest czyszczony w jest.setup.js beforeEach
+        expect(sendEmail).toHaveBeenCalledTimes(1);
         expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({
             email: unverifiedUser.email,
-            subject: expect.stringContaining('Ponowna Aktywacja Konta')
+            subject: expect.stringContaining(`Ponowna Aktywacja Konta w ${process.env.APP_NAME || 'Hello Beacon'}`)
         }));
     });
 
     it('should not resend for already verified user', async () => {
-        const verifiedUser = await User.create({
-            username: 'verifiedresend', email: 'verifiedresend@example.com', password: 'password123', isEmailVerified: true
+        const verifiedUser = await createVerifiedUser({ // Użyj fabryki
+            username: 'verifiedresend_auth', email: 'resend_auth@example.com'
         });
         const res = await request(app)
             .post('/api/auth/resend-verification-email')
@@ -143,135 +156,140 @@ describe('Auth API - Resend Verification Email', () => {
 });
 
 
-
 describe('Auth API - Login', () => {
-    const loginCredentials = {
-        email: 'login@example.com',
+    const baseLoginCredentials = { // Użyj unikalnych danych dla tego bloku describe
+        email: 'login_user_auth@example.com',
         password: 'password123',
     };
+    let userForLoginTests;
 
     beforeEach(async () => {
-        await User.create({
-            username: 'loginuser',
-            email: loginCredentials.email,
-            password: loginCredentials.password, // Czysty tekst hasła
-            isEmailVerified: true,
-            isBanned: false,
-            isDeleted: false,
+        // Czyść użytkownika z tego emaila przed każdym testem w tym bloku
+        await mongoose.connection.collection('users').deleteMany({ email: baseLoginCredentials.email });
+        // Stwórz domyślnie aktywnego, zweryfikowanego użytkownika
+        userForLoginTests = await createVerifiedUser({
+            username: 'login_user_specific',
+            email: baseLoginCredentials.email,
+            password: baseLoginCredentials.password,
         });
     });
-
 
     it('should login an existing and verified user', async () => {
         const res = await request(app)
             .post('/api/auth/login')
-            .send(loginCredentials);
+            .send(baseLoginCredentials);
 
         expect(res.statusCode).toEqual(200);
         expect(res.body).toHaveProperty('token');
-        expect(res.body.email).toBe(loginCredentials.email);
+        expect(res.body.email).toBe(baseLoginCredentials.email);
     });
 
     it('should not login a user with incorrect password', async () => {
         const res = await request(app)
             .post('/api/auth/login')
-            .send({ email: loginCredentials.email, password: 'wrongpassword' });
+            .send({ email: baseLoginCredentials.email, password: 'wrongpassword' });
 
         expect(res.statusCode).toEqual(401);
         expect(res.body).toHaveProperty('message', 'Invalid email or password');
     });
 
     it('should not login an unverified user', async () => {
-        await User.updateOne({ email: loginCredentials.email }, { isEmailVerified: false });
+        // Zmodyfikuj użytkownika stworzonego w beforeEach
+        await User.updateOne({ _id: userForLoginTests._id }, { isEmailVerified: false });
+
         const res = await request(app)
             .post('/api/auth/login')
-            .send(loginCredentials);
+            .send(baseLoginCredentials);
 
         expect(res.statusCode).toEqual(403);
+        expect(res.body).toHaveProperty('message', 'Please verify your email address before logging in. You can request a new verification link.');
         expect(res.body).toHaveProperty('emailNotVerified', true);
     });
 
     it('should not login a banned user', async () => {
-        await User.updateOne({ email: loginCredentials.email }, { isBanned: true, banReason: 'Test ban' });
+        // Zmodyfikuj użytkownika stworzonego w beforeEach
+        await User.updateOne({ _id: userForLoginTests._id }, { isBanned: true, banReason: 'Test ban for login' });
+
         const res = await request(app)
             .post('/api/auth/login')
-            .send(loginCredentials);
+            .send(baseLoginCredentials);
 
         expect(res.statusCode).toEqual(403);
+        expect(res.body).toHaveProperty('message', expect.stringContaining('Your account has been banned. Reason: Test ban for login'));
         expect(res.body).toHaveProperty('accountBanned', true);
     });
 
     it('should not login a soft-deleted user', async () => {
-        await User.updateOne({ email: loginCredentials.email }, { isDeleted: true, deletedAt: new Date() });
+        // Zmodyfikuj użytkownika stworzonego w beforeEach
+        await User.updateOne({ _id: userForLoginTests._id }, { isDeleted: true, deletedAt: new Date() });
+
         const res = await request(app)
             .post('/api/auth/login')
-            .send(loginCredentials);
-        expect(res.statusCode).toEqual(401); // Bo findOne({ email, isDeleted: false }) nie znajdzie
+            .send(baseLoginCredentials);
+        // Oczekujemy 401, ponieważ User.findOne({ email, isDeleted: false }) nie znajdzie użytkownika
+        expect(res.statusCode).toEqual(401);
+        expect(res.body).toHaveProperty('message', 'Invalid email or password');
     });
 });
 
+
 describe('Auth API - Password Reset', () => {
     let userForPasswordReset;
-    const userEmail = 'resetpass@example.com';
+    const userEmailForReset = 'resetpass_auth@example.com';
 
     beforeEach(async () => {
-        userForPasswordReset = await User.create({
-            username: 'resetpassuser',
-            email: userEmail,
+        await mongoose.connection.collection('users').deleteMany({ email: userEmailForReset });
+        userForPasswordReset = await createVerifiedUser({ // Użyj fabryki
+            username: 'resetpassuser_auth',
+            email: userEmailForReset,
             password: 'oldpassword123',
-            isEmailVerified: true, // Użytkownik musi być zweryfikowany, aby zresetować hasło (zgodnie z logiką kontrolera)
-            isBanned: false,
-            isDeleted: false,
         });
     });
 
     it('should send a password reset link for existing verified user', async () => {
         const res = await request(app)
             .post('/api/auth/forgot-password')
-            .send({ email: userEmail });
+            .send({ email: userEmailForReset });
 
         expect(res.statusCode).toEqual(200);
         expect(res.body).toHaveProperty('message', expect.stringContaining('a password reset link has been sent'));
         expect(sendEmail).toHaveBeenCalledTimes(1);
         expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({
-            email: userEmail,
-            subject: `Reset Hasła w ${process.env.APP_NAME || 'Hello Beacon'}` // Użyj poprawnej nazwy
+            email: userEmailForReset,
+            subject: `Reset Hasła w ${process.env.APP_NAME || 'Hello Beacon'}`
         }));
-
-        // Sprawdź, czy token został zapisany w bazie
-        const userInDb = await User.findOne({ email: userEmail }).select('+passwordResetToken');
+        const userInDb = await User.findOne({ email: userEmailForReset }).select('+passwordResetToken');
         expect(userInDb.passwordResetToken).toBeDefined();
     });
 
     it('should reset password with a valid token', async () => {
-    const rawResetToken = crypto.randomBytes(32).toString('hex');
-    const passwordResetTokenForDb = crypto.createHash('sha256').update(rawResetToken).digest('hex');
+        const rawResetToken = crypto.randomBytes(32).toString('hex');
+        const passwordResetTokenForDb = crypto.createHash('sha256').update(rawResetToken).digest('hex');
 
-    await User.updateOne({ _id: userForPasswordReset._id }, {
-        passwordResetToken: passwordResetTokenForDb, // Zapisz zahashowany do bazy
-        passwordResetTokenExpires: new Date(Date.now() + 10 * 60 * 1000)
-    });
+        await User.updateOne({ _id: userForPasswordReset._id }, {
+            passwordResetToken: passwordResetTokenForDb,
+            passwordResetTokenExpires: new Date(Date.now() + 10 * 60 * 1000)
+        });
 
-    const newPassword = 'newStrongPassword123';
-    const res = await request(app)
-        .put(`/api/auth/reset-password/${rawResetToken}`) // Użyj niehashowanego (raw) tokenu w URL
-        .send({ password: newPassword });
+        const newPassword = 'newStrongPassword123';
+        const res = await request(app)
+            .put(`/api/auth/reset-password/${rawResetToken}`)
+            .send({ password: newPassword });
 
         expect(res.statusCode).toEqual(200);
         expect(res.body).toHaveProperty('message', 'Password reset successfully. You can now log in with your new password.');
 
-        // Krok 3: Sprawdź, czy hasło zostało zmienione i tokeny usunięte
         const updatedUser = await User.findById(userForPasswordReset._id).select('+password');
         expect(updatedUser.passwordResetToken).toBeUndefined();
         const isMatch = await bcrypt.compare(newPassword, updatedUser.password);
         expect(isMatch).toBe(true);
     });
 
-    it('should not reset password with an invalid or expired token', async () => {
+    it('should not reset password with an invalid or expired token (format)', async () => {
         const res = await request(app)
             .put(`/api/auth/reset-password/invalidOrExpiredToken123`)
             .send({ password: 'newpassword123' });
         expect(res.statusCode).toEqual(400);
-        expect(res.body.errors[0].msg).toBe('Invalid token format (not hex)');
+        expect(res.body.errors[0].msg).toBe('Token must be hexadecimal');
     });
 });

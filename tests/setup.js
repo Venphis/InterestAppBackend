@@ -29,15 +29,17 @@ afterAll(async () => {
     }
 });
 
-// Opcjonalnie: Uruchamiane przed każdym pojedynczym testem
-// async function clearDatabase() {
-//     const collections = mongoose.connection.collections;
-//     for (const key in collections) {
-//         const collection = collections[key];
-//         await collection.deleteMany({});
-//     }
-// }
-// beforeEach(async () => await clearDatabase());
+async function clearDatabase() {
+    const collections = mongoose.connection.collections;
+    for (const key in collections) {
+        await collections[key].deleteMany({});
+    }
+}
+
+beforeEach(async () => {
+    if (mongoose.connection.readyState === 0) return; // baza jeszcze nie podłączona
+    await clearDatabase();
+});
 
 // Możesz wyeksportować funkcje pomocnicze, jeśli są potrzebne w testach
 // module.exports = { clearDatabase };

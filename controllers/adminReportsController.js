@@ -1,5 +1,6 @@
 // controllers/adminReportsController.js
 const Report = require('../models/Report');
+const logAuditEvent = require('../utils/auditLogger');
 const { validationResult } = require('express-validator');
 
 // @desc    Get all reports (paginated, filterable)
@@ -44,6 +45,7 @@ const getAllReports = async (req, res) => {
     } catch (error) {
         console.error('Admin Get All Reports Error:', error);
         res.status(500).json({ message: 'Server Error fetching reports.' });
+        next(error);
     }
 };
 
@@ -75,6 +77,7 @@ const getReportById = async (req, res) => {
             return res.status(404).json({ message: 'Report not found (invalid ID format)' });
         }
         res.status(500).json({ message: 'Server Error fetching report details.' });
+        next(error);
     }
 };
 
@@ -98,6 +101,8 @@ const updateReport = async (req, res) => {
         if (!report) {
             return res.status(404).json({ message: 'Report not found.' });
         }
+
+        const oldStatus = report.status;
 
         if (status) {
             // Walidacja czy status jest dozwolony
@@ -131,6 +136,7 @@ const updateReport = async (req, res) => {
             return res.status(400).json({ message: messages.join(', ') });
         }
         res.status(500).json({ message: 'Server Error updating report.' });
+        next(error);
     }
 };
 

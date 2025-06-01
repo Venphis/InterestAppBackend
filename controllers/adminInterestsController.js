@@ -3,32 +3,28 @@ const Interest = require('../models/Interest');
 const InterestCategory = require('../models/InterestCategory');
 const UserInterest = require('../models/UserInterest'); // Potrzebne do sprawdzenia powiązań
 const { validationResult } = require('express-validator');
+const logAuditEvent = require('../utils/auditLogger');
 
 // createInterestCategory - bez zmian
 // getAllInterestCategories - bez zmian
 // updateInterestCategory - bez zmian
 // deleteInterestCategory - bez zmian (ale pamiętaj o TODO co do zainteresowań w usuwanej kategorii)
 
-const createInterestCategory = async (req, res) => {
+const createInterestCategory = async (req, res, next) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     const { name, description } = req.body;
-    if (!name) {
-        return res.status(400).json({ message: 'Category name is required.' });
-    }
     try {
-        const categoryExists = await InterestCategory.findOne({ name });
+        const categoryExists = await InterestCategory.findOne({ name: { $regex: `^${name}$`, $options: 'i' } }); // Case-insensitive check
         if (categoryExists) {
             return res.status(400).json({ message: 'Interest category with this name already exists.' });
         }
         const category = await InterestCategory.create({ name, description });
+        await logAuditEvent('admin_created_interest_category', { type: 'admin', id: req.adminUser._id }, 'admin_action', { type: 'interest_category', id: category._id }, { categoryName: name }, req);
         res.status(201).json(category);
     } catch (error) {
-        console.error('Admin Create Interest Category Error:', error);
-        if (error.name === 'ValidationError') return res.status(400).json({ message: error.message });
-        res.status(500).json({ message: 'Server Error creating interest category.' });
+        console.error('[adminInterestsCtrl] Create Interest Category Error:', error);
+        next(error);
     }
 };
 
@@ -41,100 +37,105 @@ const getAllInterestCategories = async (req, res) => {
         const categories = await InterestCategory.find().sort('name');
         res.json(categories);
     } catch (error) {
-        console.error('Admin Get All Interest Categories Error:', error);
-        res.status(500).json({ message: 'Server Error fetching interest categories.' });
+        console.error('[adminInterestsCtrl] Get All Interest Categories Error:', error);
+        next(error);
     }
 };
 
 const updateInterestCategory = async (req, res) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     const { name, description } = req.body;
     try {
         const category = await InterestCategory.findById(req.params.categoryId);
-        if (!category) {
-            return res.status(404).json({ message: 'Interest category not found.' });
-        }
+        if (!category) return res.status(404).json({ message: 'Interest category not found.' });
+        const oldName = category.name;
         if (name) {
-            const existingCategory = await InterestCategory.findOne({ name, _id: { $ne: req.params.categoryId } });
-            if (existingCategory) {
-                return res.status(400).json({ message: 'Another category with this name already exists.' });
-            }
+            const existingCategory = await InterestCategory.findOne({ name: { $regex: `^${name}$`, $options: 'i' }, _id: { $ne: req.params.categoryId } });
+            if (existingCategory) return res.status(400).json({ message: 'Another category with this name already exists.' });
             category.name = name;
         }
         if (description !== undefined) category.description = description;
-
         const updatedCategory = await category.save();
+        await logAuditEvent('admin_updated_interest_category', { type: 'admin', id: req.adminUser._id }, 'admin_action', { type: 'interest_category', id: updatedCategory._id }, { oldName, newName: updatedCategory.name, updatedFields: req.body }, req);
         res.json(updatedCategory);
     } catch (error) {
-        console.error('Admin Update Interest Category Error:', error);
-        if (error.name === 'ValidationError') return res.status(400).json({ message: error.message });
-        res.status(500).json({ message: 'Server Error updating interest category.' });
+        console.error('[adminInterestsCtrl] Update Interest Category Error:', error);
+        next(error);
     }
 };
 
 const deleteInterestCategory = async (req, res) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     try {
         const category = await InterestCategory.findById(req.params.categoryId);
-        if (!category) {
-            return res.status(404).json({ message: 'Interest category not found.' });
-        }
-        // Zmiana: Zamiast usuwać kategorię z zainteresowań, można je zarchiwizować lub zabronić
+        if (!category) return res.status(404).json({ message: 'Interest category not found.' });
         const interestsInCategory = await Interest.countDocuments({ category: req.params.categoryId, isArchived: false });
         if (interestsInCategory > 0) {
             return res.status(400).json({ message: `Cannot delete category. It still contains ${interestsInCategory} active interest(s). Please archive or reassign them first.`});
         }
+        await Interest.updateMany({ category: req.params.categoryId }, { $unset: { category: "" } });
+        const categoryName = category.name;
         await InterestCategory.deleteOne({ _id: req.params.categoryId });
-        res.json({ message: 'Interest category deleted successfully.' });
+        await logAuditEvent('admin_deleted_interest_category', { type: 'admin', id: req.adminUser._id }, 'admin_action', { type: 'interest_category', id: req.params.categoryId }, { categoryName }, req);
+        res.json({ message: 'Interest category deleted successfully. Interests under this category have their category unassigned.' });
     } catch (error) {
-        console.error('Admin Delete Interest Category Error:', error);
-        res.status(500).json({ message: 'Server Error deleting interest category.' });
+        console.error('[adminInterestsCtrl] Delete Interest Category Error:', error);
+        next(error);
     }
 };
 
 
 // --- Interest Management ---
 
-const createInterest = async (req, res) => {
+const createInterest = async (req, res, next) => { // Dodano next
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
     }
     const { name, categoryId, description } = req.body;
-    if (!name) {
-        return res.status(400).json({ message: 'Interest name is required.' });
-    }
+
     try {
         if (categoryId) {
             const catExists = await InterestCategory.findById(categoryId);
             if (!catExists) return res.status(404).json({ message: 'Specified interest category not found.' });
         }
+        // POPRAWKA: Sprawdzanie duplikatów (case-insensitive)
+        const duplicate = await Interest.findOne({
+          name: { $regex: `^${name}$`, $options: 'i' }, // Case-insensitive exact match
+          category: categoryId,
+          isArchived: { $ne: true } // Znajdź, jeśli isArchived jest false LUB nie istnieje (undefined)
+        });
 
-        // Sprawdź unikalność tylko wśród aktywnych zainteresowań
-        const interestExists = await Interest.findOne({ name, category: categoryId || null, isArchived: false });
-        if (interestExists) {
-            return res.status(400).json({ message: 'Active interest with this name (and category) already exists.' });
+        if (duplicate) {
+          return res
+            .status(400)
+            .json({ message: 'Active interest with this name and category already exists.' });
         }
 
         const interest = await Interest.create({
             name,
             category: categoryId || null,
             description,
-            isArchived: false // Domyślnie aktywne
+            isArchived: false
         });
+
+        await logAuditEvent(
+          'admin_created_interest',
+          { type: 'admin', id: req.adminUser._id },
+          'admin_action',
+          { type: 'interest', id: interest._id },
+          { interestName: name, categoryId },
+          req
+        );
+        // Zwróć z populacją, aby frontend od razu miał nazwę kategorii
         const populatedInterest = await Interest.findById(interest._id).populate('category', 'name');
-        res.status(201).json(populatedInterest);
+        res.status(201).json(populatedInterest); // Zmieniono message na zwracanie obiektu
     } catch (error) {
-        console.error('Admin Create Interest Error:', error);
-        if (error.name === 'ValidationError') return res.status(400).json({ message: error.message });
+        console.error('[adminInterestsCtrl] Admin Create Interest Error:', error);
         if (error.code === 11000) return res.status(400).json({ message: 'An interest with this name (and category) already exists or violates a unique index.' });
-        res.status(500).json({ message: 'Server Error creating interest.' });
+        next(error);
     }
 };
 
@@ -143,121 +144,93 @@ const createInterest = async (req, res) => {
 // @access  Private (Admin/Superadmin/Moderator)
 const getAllInterestsAdmin = async (req, res) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
     const { categoryId, name, showArchived } = req.query;
-
     const query = {};
     if (categoryId) query.category = categoryId;
     if (name) query.name = { $regex: name, $options: 'i' };
-    if (showArchived !== 'true') { // Domyślnie pokazuj tylko aktywne
-        query.isArchived = false;
-    }
-    // Jeśli showArchived === 'true', nie dodajemy warunku isArchived, więc pokaże wszystkie
-
+    if (showArchived !== 'true') query.isArchived = false;
     try {
-        const interests = await Interest.find(query)
-                                       .populate('category', 'name')
-                                       .sort({ isArchived: 1, name: 1 }) // Najpierw aktywne, potem posortowane po nazwie
-                                       .skip(skip)
-                                       .limit(limit);
+        const interests = await Interest.find(query).populate('category', 'name').sort({ isArchived: 1, name: 1 }).skip(skip).limit(limit);
         const totalInterests = await Interest.countDocuments(query);
-        res.json({
-            interests,
-            currentPage: page,
-            totalPages: Math.ceil(totalInterests / limit),
-            totalInterests
-        });
+        res.json({ interests, currentPage: page, totalPages: Math.ceil(totalInterests / limit), totalInterests });
     } catch (error) {
-        console.error('Admin Get All Interests Error:', error);
-        res.status(500).json({ message: 'Server Error fetching interests.' });
+        console.error('[adminInterestsCtrl] Admin Get All Interests Error:', error);
+        next(error);
     }
 };
 
-const updateInterest = async (req, res) => {
+const updateInterest = async (req, res, next) => { // Dodano next
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
-    const { name, categoryId, description, isArchived } = req.body; // Dodano isArchived
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const { name, categoryId, description, isArchived } = req.body;
     try {
         const interest = await Interest.findById(req.params.interestId);
-        if (!interest) {
-            return res.status(404).json({ message: 'Interest not found.' });
-        }
-
-        if (categoryId) {
+        if (!interest) return res.status(404).json({ message: 'Interest not found.' });
+        const oldData = { name: interest.name, category: interest.category, description: interest.description, isArchived: interest.isArchived };
+        if (categoryId === null || categoryId === '') { // Jawne usunięcie kategorii
+            interest.category = null;
+        } else if (categoryId) {
             const catExists = await InterestCategory.findById(categoryId);
             if (!catExists) return res.status(404).json({ message: 'Specified interest category not found.' });
             interest.category = categoryId;
-        } else if (categoryId === null || categoryId === '') {
-            interest.category = null;
         }
-
         if (name) {
-            const newCategoryForUniqueness = categoryId !== undefined ? categoryId : interest.category;
-            const existingInterest = await Interest.findOne({
-                name,
-                category: newCategoryForUniqueness || null,
-                _id: { $ne: req.params.interestId },
-                isArchived: false // Unikalność sprawdzaj tylko wśród aktywnych
-            });
-            if (existingInterest) {
-                return res.status(400).json({ message: 'Another active interest with this name (and category) already exists.' });
-            }
+            const newCategoryForUniqueness = categoryId !== undefined ? (categoryId || null) : interest.category;
+            const existingInterest = await Interest.findOne({ name: { $regex: `^${name}$`, $options: 'i' }, category: newCategoryForUniqueness, _id: { $ne: req.params.interestId }, isArchived: false });
+            if (existingInterest) return res.status(400).json({ message: 'Another active interest with this name (and category) already exists.' });
             interest.name = name;
         }
         if (description !== undefined) interest.description = description;
-        if (isArchived !== undefined) interest.isArchived = isArchived; // Pozwól na zmianę statusu archiwizacji
-
+        if (isArchived !== undefined) interest.isArchived = isArchived;
         const updatedInterest = await interest.save();
+        await logAuditEvent('admin_updated_interest', { type: 'admin', id: req.adminUser._id }, 'admin_action', { type: 'interest', id: updatedInterest._id }, { oldData, newData: { name, categoryId, description, isArchived } }, req);
         const populatedInterest = await Interest.findById(updatedInterest._id).populate('category', 'name');
         res.json(populatedInterest);
     } catch (error) {
-        console.error('Admin Update Interest Error:', error);
-        if (error.name === 'ValidationError') return res.status(400).json({ message: error.message });
+        console.error('[adminInterestsCtrl] Admin Update Interest Error:', error);
         if (error.code === 11000) return res.status(400).json({ message: 'An interest with this name (and category) already exists or violates a unique index.' });
-        res.status(500).json({ message: 'Server Error updating interest.' });
+        next(error);
     }
 };
+
 
 // Zmieniono z deleteInterest na archiveInterest
 // @desc    Archive an interest (soft delete)
 // @route   DELETE /api/admin/interests/:interestId (lub PUT .../archive)
 // @access  Private (Admin/Superadmin)
-const archiveInterest = async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+const archiveInterest = async (req, res, next) => { // Dodano next
+    const errors = validationResult(req); // Jeśli masz walidatory na param w trasie
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     try {
-        const interest = await Interest.findById(req.params.interestId);
+        const { interestId } = req.params;
+        const interest = await Interest.findById(interestId);
         if (!interest) {
             return res.status(404).json({ message: 'Interest not found.' });
         }
         if (interest.isArchived) {
             return res.status(400).json({ message: 'Interest is already archived.' });
         }
-
         interest.isArchived = true;
-        await interest.save();
+        await interest.save({ validateBeforeSave: false }); // Zapisz bez walidacji, bo zmieniamy tylko flagę
 
-        await logAuditEvent(
+        await logAuditEvent( // Upewnij się, że logAuditEvent jest dostępne
             'admin_archived_interest',
             { type: 'admin', id: req.adminUser._id },
             'admin_action',
             { type: 'interest', id: interest._id },
-            { interestName: interest.name }, req
+            { interestName: interest.name },
+            req
         );
-
-        res.json({ message: 'Interest archived successfully. It will no longer be available for users to add but will remain on existing profiles.' });
+        // Zwróć zaktualizowany obiekt, aby frontend miał spójne dane
+        const populatedInterest = await Interest.findById(interest._id).populate('category', 'name');
+        res.status(200).json({ message: 'Interest archived successfully.', interest: populatedInterest });
     } catch (error) {
-        console.error('Admin Archive Interest Error:', error);
-        res.status(500).json({ message: 'Server Error archiving interest.' });
+        console.error('[adminInterestsCtrl] Admin Archive Interest Error:', error);
+        next(error);
     }
 };
 
@@ -266,35 +239,21 @@ const archiveInterest = async (req, res) => {
 // @access  Private (Admin/Superadmin)
 const restoreInterest = async (req, res) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     try {
         const interest = await Interest.findById(req.params.interestId);
-        if (!interest) {
-            return res.status(404).json({ message: 'Interest not found.' });
-        }
-        if (!interest.isArchived) {
-            return res.status(400).json({ message: 'Interest is not archived.' });
-        }
-
-        // Sprawdź, czy nie ma aktywnego zainteresowania o tej samej nazwie i kategorii
-        const activeDuplicate = await Interest.findOne({
-            name: interest.name,
-            category: interest.category,
-            isArchived: false
-        });
-        if (activeDuplicate) {
-            return res.status(400).json({ message: 'Cannot restore. An active interest with the same name and category already exists.' });
-        }
-
+        if (!interest) return res.status(404).json({ message: 'Interest not found.' });
+        if (!interest.isArchived) return res.status(400).json({ message: 'Interest is not archived.' });
+        const activeDuplicate = await Interest.findOne({ name: interest.name, category: interest.category, isArchived: false });
+        if (activeDuplicate) return res.status(400).json({ message: 'Cannot restore. An active interest with the same name and category already exists.' });
         interest.isArchived = false;
         await interest.save();
+        await logAuditEvent('admin_restored_interest', { type: 'admin', id: req.adminUser._id }, 'admin_action', { type: 'interest', id: interest._id }, { interestName: interest.name }, req);
         const populatedInterest = await Interest.findById(interest._id).populate('category', 'name');
         res.json({ message: 'Interest restored successfully.', interest: populatedInterest });
     } catch (error) {
-        console.error('Admin Restore Interest Error:', error);
-        res.status(500).json({ message: 'Server Error restoring interest.' });
+        console.error('[adminInterestsCtrl] Admin Restore Interest Error:', error);
+        next(error);
     }
 };
 

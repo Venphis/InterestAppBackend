@@ -3,7 +3,7 @@ const express = require('express');
 const { body, param, query } = require('express-validator');
 const {
     getAllUsers, getUserById, banUser, unbanUser, deleteUser, restoreUser,
-    manuallyVerifyEmail, createTestUser, generateTestUserToken
+    manuallyVerifyEmail, createTestUser, generateTestUserToken,changeUserRole
 } = require('../controllers/adminUsersController');
 const { protectAdmin, authorizeAdminRole } = require('../middleware/adminAuthMiddleware');
 const router = express.Router();
@@ -41,5 +41,18 @@ router.delete('/:userId', authorizeAdminRole(['superadmin']), userIdValidation, 
 router.put('/:userId/restore', authorizeAdminRole(['superadmin']), userIdValidation, restoreUser);
 router.put('/:userId/verify-email', authorizeAdminRole(['admin', 'superadmin']), userIdValidation, manuallyVerifyEmail);
 router.post('/:userId/generate-test-token', authorizeAdminRole(['admin', 'superadmin']), userIdValidation, generateTestUserToken);
+
+router.put( 
+  '/:userId/role',
+  authorizeAdminRole(['superadmin']), // Tylko superadmin może zmieniać role
+  [
+    ...userIdValidation, // Użyj istniejącej walidacji dla userId
+    body('role').trim().notEmpty().withMessage('Role is required.')
+        // Możesz dodać .isIn(User.schema.path('role').enumValues).withMessage('Invalid role value.')
+        // ale kontroler już to sprawdza. Jeśli chcesz, aby walidator to robił, musisz mieć dostęp do User.schema tutaj.
+        // Prostsze jest sprawdzenie w kontrolerze.
+  ],
+  changeUserRole
+);
 
 module.exports = router;

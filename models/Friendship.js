@@ -2,54 +2,46 @@
 const mongoose = require('mongoose');
 
 const FriendshipSchema = new mongoose.Schema({
-  // Uporządkujmy ID, aby uniknąć duplikatów (user1 < user2)
-  // Lub zarządzajmy tym w logice kontrolera
-  user1: { // ID pierwszego użytkownika
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  user2: { // ID drugiego użytkownika
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
+  user1: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  user2: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   status: {
     type: String,
-    enum: [
-        'pending', // Oczekuje na akceptację
-        'accepted', // Znajomość zaakceptowana
-        'rejected', // Zaproszenie odrzucone
-        'blocked' // Jeden użytkownik zablokował drugiego (wymaga dodatkowego pola 'blockedBy')
-        ],
-    required: true,
-    default: 'pending'
+    enum: ['pending', 'accepted', 'rejected', 'blocked'],
+    default: 'pending',
+    required: true
   },
-  // Kto wysłał zaproszenie - ważne dla statusu 'pending' i 'rejected'
-  requestedBy: {
-     type: mongoose.Schema.Types.ObjectId,
-     ref: 'User',
-     required: true
-  },
-  // Kto odrzucił/zablokował (opcjonalne, dla statusu 'rejected'/'blocked')
-  // actionUserId: {
-  //    type: mongoose.Schema.Types.ObjectId,
-  //    ref: 'User'
-  // },
-  friendshipType: { // Typ znajomości
+  requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  friendshipType: {
     type: String,
-    enum: [ // Przykładowe typy - dostosuj do swoich potrzeb
-      'unverified',
-      'verified'
-    ],
-    default: 'unverified' // Domyślny typ po akceptacji
+    enum: ['unverified', 'verified'],
+    default: 'unverified',
+    required: true
+  },
+  blockedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+  },
+  isBlocked: {
+    type: Boolean,
+    default: false,
   }
 }, { timestamps: true });
 
-// Indeks ułatwiający wyszukiwanie znajomości dla danego użytkownika
-FriendshipSchema.index({ user1: 1, status: 1 });
-FriendshipSchema.index({ user2: 1, status: 1 });
-// Unikalny indeks zapobiegający duplikatom tej samej pary (wymaga sortowania ID w kontrolerze)
-// FriendshipSchema.index({ user1: 1, user2: 1 }, { unique: true });
+// POPRAWKA O3 (pkt 4a) - Hook do sortowania ID przed walidacją/zapisem
+FriendshipSchema.pre('validate', function (next) {
+  if (this.user1 && this.user2 && this.user1.toString() > this.user2.toString()) {
+    [this.user1, this.user2] = [this.user2, this.user1];
+  }
+  next();
+});
+
+// ── Unikalny duet user1 + user2 ─────────────────────────────────
+FriendshipSchema.index({ user1: 1, user2: 1 }, { unique: true });
+
+FriendshipSchema.index({ user1: 1, status: 1, isBlocked: 1 });
+FriendshipSchema.index({ user2: 1, status: 1, isBlocked: 1 });
+
+// Usunięto poprzedni hook pre('save') dotyczący isBlocked, logika przeniesiona do kontrolerów
 
 module.exports = mongoose.model('Friendship', FriendshipSchema);
