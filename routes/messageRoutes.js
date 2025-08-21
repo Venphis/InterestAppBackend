@@ -1,6 +1,6 @@
 // routes/messageRoutes.js
 const express = require('express');
-const { body, param } = require('express-validator');
+const { body, param, query } = require('express-validator');
 const { protect } = require('../middleware/authMiddleware');
 const { sendMessage, allMessages } = require('../controllers/chatController'); // Kontrolery są w chatController
 const router = express.Router();
@@ -14,6 +14,11 @@ router.post('/', [
     body('content').trim().notEmpty().withMessage('Message content cannot be empty.').isLength({ max: 5000 }).withMessage('Message content max 5000 chars.').escape()
 ], sendMessage);
 
-router.get('/:chatId', chatIdValidation, allMessages);
+router.get('/:chatId', [
+    ...chatIdValidation,
+    // Walidacja dla query params paginacji
+    query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer').toInt(),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100').toInt()
+], allMessages);
 
 module.exports = router;

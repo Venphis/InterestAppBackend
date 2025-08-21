@@ -1,5 +1,6 @@
 // routes/userRoutes.js
 const express = require('express');
+const multer = require('multer');
 const { body, param, query } = require('express-validator');
 const { protect } = require('../middleware/authMiddleware');
 const { uploadAvatar } = require('../middleware/uploadMiddleware');
@@ -22,7 +23,24 @@ router.route('/profile')
         body('profile.broadcastMessage').optional({ checkFalsy: true }).trim().isLength({ max: 280 }).escape()
     ], updateUserProfile);
 
-router.put('/profile/avatar', uploadAvatar.single('avatarImage'), updateUserAvatar);
+router.put('/profile/avatar', (req, res, next) => {
+    uploadAvatar.single('avatarImage')(req, res, (err) => {
+        if (err) {
+            if (err instanceof multer.MulterError) {
+                if (err.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(400).json({ message: 'File too large. Maximum size is 5MB.' });
+                }
+                return res.status(400).json({ message: err.message });
+            } else if (err) {
+                if (err.message === 'Not an image! Please upload only images.') {
+                     return res.status(400).json({ message: 'Not an image! Please upload only images.' });
+                }
+                return res.status(400).json({ message: err.message });
+            }
+        }
+        next();
+    });
+}, updateUserAvatar);
 
 const userInterestIdValidation = [param('userInterestId').isMongoId().withMessage('Invalid UserInterest ID')];
 

@@ -121,7 +121,7 @@ const findUsers = async (req, res, next) => { // Dodano next
 // @desc    Add an interest to the logged-in user's profile
 // @route   POST /api/users/profile/interests
 // @access  Private
-const addUserInterest = async (req, res) => {
+const addUserInterest = async (req, res, next) => { // Dodaj next
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
@@ -129,47 +129,44 @@ const addUserInterest = async (req, res) => {
     const { interestId, customDescription } = req.body;
     const userId = req.user._id;
 
-    if (!interestId) {
-        return res.status(400).json({ message: 'Interest ID is required' });
-    }
+    // To sprawdzenie nie jest już potrzebne, bo express-validator robi to w trasie
+    // if (!interestId) {
+    //     return res.status(400).json({ message: 'Interest ID is required' });
+    // }
 
     try {
-        // Sprawdź czy zainteresowanie istnieje
-        const interestExists = await Interest.findById(interestId);
-        if (!interestExists) {
+        const interest = await Interest.findById(interestId);
+        if (!interest) {
             return res.status(404).json({ message: 'Interest not found' });
         }
-
-        // Sprawdź czy użytkownik już ma to zainteresowanie (indeks w modelu też to robi, ale lepiej sprawdzić)
+        if (interest.isArchived) {
+            return res.status(400).json({ message: 'Cannot add an archived interest' });
+        }
         const existingUserInterest = await UserInterest.findOne({ userId, interestId });
         if (existingUserInterest) {
             return res.status(400).json({ message: 'Interest already added to profile' });
         }
-
-        // Stwórz nowy wpis UserInterest
         const newUserInterest = await UserInterest.create({
             userId,
             interestId,
-            customDescription: customDescription || '' // Ustaw pusty string jeśli nie podano
+            customDescription: customDescription || ''
         });
+
+        // Logowanie zdarzenia
+        await logAuditEvent('user_added_interest', { type: 'user', id: userId }, 'info', { type: 'interest', id: interestId }, { userInterestId: newUserInterest._id }, req);
 
         // Zwróć nowo dodane zainteresowanie z populacją
         const populatedInterest = await UserInterest.findById(newUserInterest._id)
-                                                  .populate('interestId', 'name category');
+                                                  .populate('interestId', 'name category isArchived');
 
-        res.status(201).json({
-            userInterestId: populatedInterest._id,
-            interest: populatedInterest.interestId,
-            customDescription: populatedInterest.customDescription
-        });
+        res.status(201).json(populatedInterest.toObject()); // Użyj .toObject() dla spójności
 
     } catch (error) {
-        console.error('Add User Interest Error:', error);
-         // Obsługa błędu unikalności (jeśli jakimś cudem sprawdzenie wyżej zawiedzie)
+        console.error('[userController] Add User Interest Error:', error);
          if (error.code === 11000) {
-             return res.status(400).json({ message: 'Interest already added to profile' });
+             return res.status(400).json({ message: 'Interest already added to profile (database constraint).' });
          }
-        res.status(500).json({ message: 'Server Error adding interest' });
+        next(error); // Przekaż do globalnego error handlera
     }
 };
 
@@ -272,7 +269,6 @@ const updateUserAvatar = async (req, res) => {
                  if (fs.existsSync(oldAvatarFullPath)) {
                     fs.unlink(oldAvatarFullPath, (err) => {
                         if (err) console.error("Error deleting old avatar:", err);
-                        else console.log("Old avatar deleted:", oldAvatarFullPath);
                     });
                 }
             }

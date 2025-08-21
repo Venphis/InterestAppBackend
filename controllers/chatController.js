@@ -2,167 +2,172 @@
 const Chat = require('../models/Chat');
 const Message = require('../models/Message');
 const User = require('../models/User');
+const Friendship = require('../models/Friendship'); // <-- IMPORT Friendship
 const { validationResult } = require('express-validator');
+const logAuditEvent = require('../utils/auditLogger'); // <-- IMPORT AuditLogger
+const mongoose = require('mongoose');
 
-// @desc    Create or access a chat between two users
-// @route   POST /api/chats
-// @access  Private
-const accessChat = async (req, res) => {
-  const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
+const accessChat = async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+    const { userId } = req.body;
+    const currentUserId = req.user._id;
+
+    // POPRAWKA: Nie można tworzyć czatu z samym sobą
+    if (currentUserId.equals(userId)) {
+        return res.status(400).json({ message: 'Cannot create a chat with yourself' });
     }
-  const { userId } = req.body; // ID drugiego użytkownika
-
-  if (!userId) {
-    console.log("UserId param not sent with request");
-    return res.sendStatus(400);
-  }
-
-  const currentUser = req.user._id;
-
-  try {
-    const recipientUser = await User.findOne({ _id: userId, isDeleted: false, isBanned: false });
-    if (!recipientUser) return res.status(404).json({ message: "Recipient user not found or inactive" });
-
-    // Sprawdź czy czat między tymi dwoma użytkownikami już istnieje
-    let existingChat = await Chat.findOne({
-      participants: { $all: [currentUser, userId] }
-    })
-    .populate({ path: "participants", select: "-password", match: { isDeleted: false } }) // Filtruj usuniętych
-    .populate("lastMessage");
-
-    // Jeśli czat istnieje, zwróć go
-    if (existingChat) {
-        // Można tu dodać logikę zapełnienia danych nadawcy ostatniej wiadomości, jeśli potrzebne
-        // existingChat = await User.populate(existingChat, { path: "lastMessage.sender", select: "username email" });
-        return res.status(200).json(existingChat);
-    }
-
-    // Jeśli czat nie istnieje, stwórz nowy
-    const chatData = {
-      // chatName: "sender", // Można dodać nazwę czatu, szczególnie dla grup
-      participants: [currentUser, userId],
-      // isGroupChat: false, // Domyślnie czat prywatny
-    };
-
-    const createdChat = await Chat.create(chatData);
-
-    // Znajdź nowo utworzony czat i zapełnij danymi uczestników
-    const fullChat = await Chat.findOne({ _id: createdChat._id })
-                               .populate("participants", "-password");
-
-    res.status(200).json(fullChat);
-
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Server Error accessing/creating chat" });
-  }
-};
-
-// @desc    Fetch all chats for a user
-// @route   GET /api/chats
-// @access  Private
-const fetchChats = async (req, res) => {
-  const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
-  try {
-    // Znajdź wszystkie czaty, w których uczestniczy zalogowany użytkownik
-    const chats = await Chat.find({ participants: { $elemMatch: { $eq: req.user._id } } })
-    .populate({ path: "participants", select: "-password", match: { isDeleted: false } })
-    .populate({
-        path: "lastMessage",
-        populate: { path: "senderId", select: "username profile.avatarUrl", match: { isDeleted: false } }
-    })
-    .sort({ lastMessageTimestamp: -1 });
-
-    // Można tu dodać logikę zapełnienia danych nadawcy ostatniej wiadomości dla każdego czatu
-    // const populatedChats = await User.populate(chats, { path: "lastMessage.sender", select: "username email profile.avatarUrl" });
-
-    res.status(200).json(chats); // Zwróć posortowane czaty
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Server Error fetching chats" });
-  }
-};
-
-// @desc    Send a message
-// @route   POST /api/messages
-// @access  Private
-const sendMessage = async (req, res) => {
-  const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
-    const { content, chatId } = req.body;
-
-    if (!content || !chatId) {
-        console.log("Invalid data passed into request");
-        return res.sendStatus(400);
-    }
-
-    var newMessage = {
-        senderId: req.user._id,
-        content: content,
-        chatId: chatId,
-    };
 
     try {
-        let message = await Message.create(newMessage);
+        const recipientUser = await User.findOne({ _id: userId, isDeleted: false, isBanned: false });
+        if (!recipientUser) return res.status(404).json({ message: "Recipient user not found, deleted, or banned" });
 
-        // Zapełnij dane nadawcy i czatu (uczestników)
-        message = await message.populate({path: "senderId", select: "username profile.avatarUrl", match: {isDeleted: false}});
+        let chat = await Chat.findOne({
+            participants: { $all: [currentUserId, userId], $size: 2 } // $size: 2 zapewnia, że to czat 1-na-1
+        })
+        .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken", match: { isDeleted: false } })
+        .populate({ path: "lastMessage", populate: { path: "senderId", select: "username profile.avatarUrl", match: { isDeleted: false } } });
+
+        if (chat) {
+            if (chat.participants.length < 2) { // Jeśli jeden z userów został usunięty/zbanowany
+                return res.status(404).json({ message: 'Chat is inaccessible as one of the participants is inactive.' });
+            }
+            return res.status(200).json(chat);
+        }
+
+        const chatData = { participants: [currentUserId, userId] };
+        const createdChat = await Chat.create(chatData);
+        const fullChat = await Chat.findOne({ _id: createdChat._id })
+            .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken", match: { isDeleted: false } });
+
+        await logAuditEvent('user_created_chat', { type: 'user', id: currentUserId }, 'info', { type: 'chat', id: fullChat._id }, { withUser: userId }, req);
+        res.status(200).json(fullChat);
+
+    } catch (error) {
+        console.error('[chatCtrl] Access Chat Error:', error);
+        next(error);
+    }
+};
+
+const fetchChats = async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    try {
+        const chats = await Chat.find({ participants: { $elemMatch: { $eq: req.user._id } } })
+            .populate({ path: "participants", select: "-password", match: { isDeleted: false } })
+            .populate({ path: "lastMessage", populate: { path: "senderId", select: "username profile.avatarUrl", match: { isDeleted: false } } })
+            .sort({ lastMessageTimestamp: -1 })
+            .lean(); // Użyj lean dla lepszej wydajności
+
+        const validChats = chats.filter(chat => chat.participants && chat.participants.length > 1);
+        res.status(200).json(validChats);
+    } catch (error) {
+        console.error('[chatCtrl] Fetch Chats Error:', error);
+        next(error);
+    }
+};
+
+const sendMessage = async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    const { content, chatId } = req.body;
+    const senderId = req.user._id;
+
+    try {
+        const chat = await Chat.findOne({
+            _id: chatId,
+            participants: senderId, // Sprawdź, czy nadawca jest uczestnikiem
+            'participants.isDeleted': { $ne: true } // Upewnij się, że nie jest usunięty (choć protect middleware powinien to załatwić)
+        }).populate('participants'); // Pobierz uczestników
+
+        // POPRAWKA: Sprawdź, czy czat istnieje i czy użytkownik jest jego uczestnikiem
+        if (!chat) {
+            return res.status(404).json({ message: "Chat not found or you are not a participant." });
+        }
+
+        // POPRAWKA: Sprawdź, czy znajomość jest zablokowana (dla czatów 1-na-1)
+        if (chat.participants.length === 2) {
+            const recipient = chat.participants.find(p => !p._id.equals(senderId));
+            if (recipient) {
+                const friendship = await Friendship.findOne({
+                    $or: [ { user1: senderId, user2: recipient._id }, { user1: recipient._id, user2: senderId } ]
+                });
+                if (friendship && friendship.isBlocked) {
+                    await logAuditEvent('user_send_message_failed_blocked', { type: 'user', id: senderId }, 'warn', { type: 'chat', id: chatId }, { recipientId: recipient._id }, req);
+                    return res.status(403).json({ message: "Cannot send message, user is blocked." });
+                }
+            }
+        }
+
+        let message = await Message.create({ senderId, content, chatId });
+        message = await message.populate({ path: "senderId", select: "username profile.avatarUrl", match: { isDeleted: false } });
         message = await message.populate({
             path: "chatId",
-            populate: { path: "participants", select: "username email profile.avatarUrl", match: {isDeleted: false} }
-        });
-        message = await User.populate(message, { // Zapełnij uczestników w czacie
-            path: "chatId.participants",
-            select: "username email profile.avatarUrl",
+            populate: { path: "participants", select: "username email profile.avatarUrl", match: { isDeleted: false } }
         });
 
-         // Aktualizuj ostatnią wiadomość i timestamp w czacie
-        await Chat.findByIdAndUpdate(req.body.chatId, {
+        await Chat.findByIdAndUpdate(chatId, {
             lastMessage: message._id,
             lastMessageTimestamp: message.createdAt
         });
 
-        // Zwróć nowo utworzoną wiadomość
-        res.json(message);
+        const io = req.app.get('socketio');
+        if (io && message.chatId && message.chatId.participants) {
+             message.chatId.participants.forEach((participant) => {
+                 if (participant && participant._id && !participant._id.equals(senderId)) {
+                    io.to(participant._id.toString()).emit("message received", message.toObject());
+                 }
+             });
+        }
 
-        // Tutaj wyślemy wiadomość przez Socket.IO do innych uczestników
-        // Logikę Socket.IO dodamy w server.js
+        await logAuditEvent('user_sent_message', { type: 'user', id: senderId }, 'info', { type: 'chat', id: chatId }, { messageLength: content.length }, req);
+        res.status(200).json(message); // Zwróć 200, a nie 201 (bo tworzysz wiadomość, a nie czat)
 
     } catch (error) {
-        console.error(error);
-        res.status(400).json({ message: "Error sending message: " + error.message });
+        console.error('[chatCtrl] Send Message Error:', error);
+        next(error);
     }
 };
 
-// @desc    Get all messages for a chat
-// @route   GET /api/messages/:chatId
-// @access  Private
-const allMessages = async (req, res) => {
-  const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+const allMessages = async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     try {
-        // Pobierz wszystkie wiadomości dla danego chatId, posortowane od najnowszej
-        // Dodaj .limit() i .skip() dla paginacji w przyszłości
-        const messages = await Message.find({ chatId: req.params.chatId })
-            .populate({path: "senderId", select: "username email profile.avatarUrl", match: {isDeleted: false}})
-            .populate("chatId")
-            .sort({ createdAt: -1 });
+        const chat = await Chat.findOne({ _id: req.params.chatId, participants: req.user._id });
+        if (!chat) {
+            return res.status(403).json({ message: "You are not authorized to view messages for this chat." });
+        }
 
-        res.json(messages);
+        // --- LOGIKA PAGINACJI ---
+        const limit = parseInt(req.query.limit) || 20; // Domyślnie 20 wiadomości na stronę
+        const page = parseInt(req.query.page) || 1;   // Domyślnie pierwsza strona
+        const skip = (page - 1) * limit;
+
+        // Pobierz łączną liczbę wiadomości dla tego czatu (do informacji o paginacji)
+        const totalMessages = await Message.countDocuments({ chatId: req.params.chatId });
+
+        // Pobierz wiadomości dla danej strony, sortując od NAJNOWSZYCH
+        // Aplikacje czatu zwykle ładują najnowsze wiadomości i dociągają starsze przy scrollowaniu w górę
+        const messages = await Message.find({ chatId: req.params.chatId })
+            .populate({ path: "senderId", select: "username email profile.avatarUrl", match: { isDeleted: false } })
+            // .populate("chatId") // Niepotrzebne
+            .sort({ createdAt: -1 }) // Sortuj od najnowszych
+            .skip(skip)
+            .limit(limit);
+
+        // Zwracamy wiadomości i informacje o paginacji
+        res.json({
+            messages: messages.reverse(), // Odwróć, aby na kliencie były w porządku chronologicznym (najstarsza na górze)
+            currentPage: page,
+            totalPages: Math.ceil(totalMessages / limit),
+            totalMessages
+        });
+
     } catch (error) {
-        console.error(error);
-        res.status(400).json({ message: "Error fetching messages: " + error.message });
+        console.error('[chatCtrl] Fetch Messages Error:', error);
+        next(error);
     }
 };
-
 
 module.exports = { accessChat, fetchChats, sendMessage, allMessages };

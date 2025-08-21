@@ -1,9 +1,8 @@
 // middleware/uploadMiddleware.js
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs'); // Do tworzenia folderów
+const fs = require('fs');
 
-// Upewnij się, że folder docelowy istnieje
 const ensureUploadsDirExists = (dirPath) => {
     if (!fs.existsSync(dirPath)) {
         fs.mkdirSync(dirPath, { recursive: true });
@@ -13,31 +12,38 @@ const ensureUploadsDirExists = (dirPath) => {
 const avatarUploadPath = path.join(__dirname, '..', 'public', 'uploads', 'avatars');
 ensureUploadsDirExists(avatarUploadPath);
 
-// Konfiguracja przechowywania dla avatarów
 const avatarStorage = multer.diskStorage({
     destination: function (req, file, cb) {
-        cb(null, avatarUploadPath); // Folder docelowy
+        cb(null, avatarUploadPath);
     },
     filename: function (req, file, cb) {
-        // Unikalna nazwa pliku: userId-timestamp.rozszerzenie
+        if (!req.user || !req.user._id) {
+            // To nie powinno się zdarzyć, bo `protect` middleware jest przed `uploadAvatar`
+            return cb(new Error('User not authenticated for upload'));
+        }
         const uniqueSuffix = req.user._id + '-' + Date.now() + path.extname(file.originalname);
         cb(null, uniqueSuffix);
     }
 });
 
-// Filtr plików (akceptuj tylko obrazy)
 const avatarFileFilter = (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
         cb(null, true);
     } else {
-        cb(new Error('Not an image! Please upload only images.'), false);
+        // Zamiast cb(new Error(...)), co jest traktowane jako błąd serwera,
+        // lepiej przekazać błąd walidacji, który można obsłużyć.
+        // Jednak standardowe `cb(new Error(...), false)` jest powszechne.
+        // Kluczowa jest obsługa tego błędu w trasie.
+        const error = new Error('Not an image! Please upload only images.');
+        error.code = 'INVALID_FILE_TYPE'; // Dajmy mu kod, żeby łatwiej go rozpoznać
+        cb(error, false);
     }
 };
 
 const uploadAvatar = multer({
     storage: avatarStorage,
     limits: {
-        fileSize: 1024 * 1024 * 2 // Limit 2MB
+        fileSize: 1024 * 1024 * 5 // --- ZMIANA LIMITU NA 10MB ---
     },
     fileFilter: avatarFileFilter
 });

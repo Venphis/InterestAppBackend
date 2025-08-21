@@ -48,6 +48,8 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 app.use(express.json()); // Do parsowania JSON w body requestów
+app.use(express.json({ limit: '10mb' })); // Upewnij się, że jest większy niż limit plików
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use('/public', express.static(path.join(__dirname, 'public'))); // Serwowanie plików statycznych
 
 // --- Główny Endpoint Aplikacji ---
