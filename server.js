@@ -30,7 +30,7 @@ const helmet = require('helmet');
 dotenv.config(); // Załaduj zmienne środowiskowe na samym początku
 
 const app = express();
-
+app.set('trust proxy', 1);
 // --- Podstawowe Middleware ---
 app.use(cors()); // Włącz CORS dla wszystkich żądań
 app.use(helmet()); // Dodaj nagłówki bezpieczeństwa
