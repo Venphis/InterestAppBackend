@@ -1,4 +1,3 @@
-// tests/adminUsers.test.js
 const request = require('supertest');
 const app = require('../server');
 const User = require('../models/User');
@@ -11,15 +10,13 @@ const {
     createUser,
     createVerifiedUser,
     createTestUserAccount,
-    generateUserToken // Jeśli masz taki helper
+    generateUserToken
 } = require('./helpers/factories');
-
-// Globalne beforeEach z jest.setup.js czyści mocki.
 
 describe('Admin Users API', () => {
     let superadminToken;
     let adminToken;
-    let regularUserForTesting; // Zmieniono na obiekt
+    let regularUserForTesting;
 
     const superadminCredentials = { username: 'suiteSuperAdmin_usersApi', password: 'password123' };
     const adminCredentials = { username: 'suiteAdmin_usersApi', password: 'password123' };
@@ -32,7 +29,7 @@ describe('Admin Users API', () => {
         await createAdmin({ username: adminCredentials.username, password: adminCredentials.password });
 
         let res = await request(app).post('/api/admin/auth/login').send(superadminCredentials);
-        expect(res.statusCode).toBe(200); // Ważne: Upewnij się, że logowanie w setupie działa
+        expect(res.statusCode).toBe(200);
         superadminToken = res.body.token;
         if (!superadminToken) throw new Error("Superadmin token not obtained in beforeAll");
 
@@ -51,8 +48,6 @@ describe('Admin Users API', () => {
         let userA, userB, userTestC;
 
         beforeEach(async () => {
-            // Czyścimy tylko użytkowników stworzonych specyficznie dla tego bloku testów
-            // regularUserForTesting stworzony w beforeAll pozostaje
             await User.deleteMany({
                 email: { $in: ['a_getlist@example.com', 'b_getlist@example.com', 'c_test_getlist@example.com'] }
             });
@@ -68,7 +63,6 @@ describe('Admin Users API', () => {
                 .set('Authorization', `Bearer ${superadminToken}`);
             expect(res.statusCode).toEqual(200);
             expect(res.body).toHaveProperty('users');
-            // Oczekujemy userA, userB, userTestC + regularUserForTesting
             expect(res.body.users.length).toBeGreaterThanOrEqual(4);
             expect(res.body.users.some(u => u._id === userA._id.toString())).toBe(true);
         });
@@ -104,9 +98,8 @@ describe('Admin Users API', () => {
             await User.findByIdAndUpdate(userA._id, { isDeleted: true, deletedAt: new Date() });
             const res = await request(app)
                 .get('/api/admin/users?showDeleted=true')
-                .set('Authorization', `Bearer ${adminToken}`); // Użyj tokenu zwykłego admina
+                .set('Authorization', `Bearer ${adminToken}`);
             expect(res.statusCode).toEqual(200);
-            // W kontrolerze jest logika, że tylko superadmin widzi usunięte, więc admin powinien dostać tylko aktywne
             expect(res.body.users.every(u => u.isDeleted === false)).toBe(true);
         });
     });
@@ -174,13 +167,10 @@ describe('Admin Users API', () => {
         });
 
         it('should allow superadmin to change a user role', async () => {
-            // Zakładamy, że endpoint to PUT /api/admin/users/:userId/role
-            // i przyjmuje { role: 'nowa_rola' } w body.
-            // Upewnij się, że 'premium_user' jest zdefiniowaną rolą w Twoim UserSchema.
-            const newRole = 'premium_user'; // Przykładowa rola
+            const newRole = 'premium_user'; 
             if (!User.schema.path('role').enumValues.includes(newRole)) {
                 console.warn(`Skipping role change test: role "${newRole}" not in User schema enums.`);
-                return; // Pomiń test, jeśli rola nie jest zdefiniowana
+                return;
             }
 
 
@@ -197,33 +187,24 @@ describe('Admin Users API', () => {
         });
 
         it('should not allow an admin with insufficient role to change a user role (if role change restricted)', async () => {
-        // Ten test ma sens tylko, jeśli np. zwykły 'admin' nie może zmieniać ról, a 'superadmin' może.
-        // Jeśli Twój endpoint /role jest chroniony tylko przez protectAdmin, a nie authorizeAdminRole('superadmin'),
-        // to ten test może nie być potrzebny lub asercja będzie inna.
-        // Załóżmy, że tylko superadmin może.
         const newRole = 'premium_user';
         if (!User.schema.path('role').enumValues.includes(newRole)) {
-            return; // Pomiń, jeśli rola nie istnieje
+            return; 
         }
 
         const res = await request(app)
             .put(`/api/admin/users/${userToModify._id}/role`)
-            .set('Authorization', `Bearer ${adminToken}`) // Użyj tokenu zwykłego admina
+            .set('Authorization', `Bearer ${adminToken}`)
             .send({ role: newRole });
-
-        // Oczekiwany status zależy od tego, jak zaimplementowałeś authorizeAdminRole dla tej trasy
-        // Jeśli jest authorizeAdminRole(['superadmin']), to powinno być 403
-        // Jeśli tylko protectAdmin, to kontroler musiałby mieć logikę sprawdzania roli req.adminUser.role
-        expect(res.statusCode).toEqual(403); // Zakładając, że tylko superadmin może
+        expect(res.statusCode).toEqual(403);
         expect(res.body.message).toContain('not authorized to access this route');
         });
 
         it('should allow superadmin to change a user role to "premium_user"', async () => {
         const newRole = 'premium_user';
-        // Upewnij się, że rola 'premium_user' jest zdefiniowana w UserSchema.path('role').enumValues
         if (!User.schema.path('role').enumValues.includes(newRole)) {
             console.warn(`SKIPPING TEST: Role "${newRole}" is not defined in User schema enums. Please add it to test this feature.`);
-            return; // Pomiń test, jeśli rola nie jest zdefiniowana
+            return;
         }
 
         const res = await request(app)
@@ -247,10 +228,8 @@ describe('Admin Users API', () => {
 
             const res = await request(app)
                 .put(`/api/admin/users/${userToModify._id}/role`)
-                .set('Authorization', `Bearer ${adminToken}`) // Użyj tokenu zwykłego admina
+                .set('Authorization', `Bearer ${adminToken}`)
                 .send({ role: newRole });
-
-            // Oczekiwany status 403, jeśli trasa jest chroniona przez authorizeAdminRole(['superadmin'])
             expect(res.statusCode).toEqual(403);
             expect(res.body.message).toContain('not authorized to access this route');
         });
@@ -261,14 +240,13 @@ describe('Admin Users API', () => {
                 .set('Authorization', `Bearer ${superadminToken}`)
                 .send({ role: 'nonExistentRole' });
             expect(res.statusCode).toEqual(400);
-            // Oczekiwany komunikat zależy od walidatora lub logiki kontrolera
             expect(res.body.message).toContain('is not allowed or not defined in User schema');
 
 
             res = await request(app)
                 .put(`/api/admin/users/${userToModify._id}/role`)
                 .set('Authorization', `Bearer ${superadminToken}`)
-                .send({}); // Brak pola role
+                .send({});
             expect(res.statusCode).toEqual(400);
             expect(res.body.errors.some(e => e.path === 'role' && e.msg === 'Role is required.')).toBe(true);
         });
@@ -295,7 +273,6 @@ describe('Admin Users API', () => {
         });
 
         it('should generate a JWT for an existing test user (admin)', async () => {
-            // Stwórz konto testowe, jeśli nie zostało stworzone w poprzednim teście (dla izolacji)
             const testUser = await createTestUserAccount({
                 username: 'genTokenTestUserApi', email: 'gentokentestapi@example.com'
             });

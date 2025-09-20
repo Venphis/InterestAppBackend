@@ -1,4 +1,3 @@
-// utils/auditLogger.js
 const AuditLog = require('../models/AuditLog');
 
 /**

@@ -1,4 +1,3 @@
-// routes/adminReportRoutes.js
 const express = require('express');
 const { body, param, query } = require('express-validator');
 const { getAllReports, getReportById, updateReport } = require('../controllers/adminReportsController');
@@ -28,7 +27,6 @@ router.put('/:reportId', [
     body('adminNotes').optional({ checkFalsy: true }).trim().isLength({ max: 2000 }).withMessage('Admin notes cannot exceed 2000 characters.').escape(),
     body().custom((value, { req }) => {
         if (req.body.status === undefined && req.body.adminNotes === undefined) {
-            // Ten komunikat jest z throw new Error
             throw new Error('Either status or adminNotes must be provided for update.');
         }
         return true;

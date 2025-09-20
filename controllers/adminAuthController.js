@@ -1,8 +1,7 @@
-// controllers/adminAuthController.js
 const AdminUser = require('../models/AdminUser');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt'); // Potrzebne do porównania starego hasła
-const logAuditEvent = require('../utils/auditLogger'); // Zakładając, że plik jest w utils
+const bcrypt = require('bcrypt'); 
+const logAuditEvent = require('../utils/auditLogger'); 
 require('dotenv').config();
 const { validationResult } = require('express-validator');
 
@@ -18,13 +17,13 @@ const loginAdmin = async (req, res) => {
         return res.status(400).json({ errors: errors.array() });
     }
   const { username, password } = req.body;
-  let adminForLog = null; // Do logowania przy nieudanym logowaniu
+  let adminForLog = null; 
   try {
     if (!username || !password) {
       return res.status(400).json({ message: 'Please provide admin username and password' });
     }
-    const admin = await AdminUser.findOne({ username }).select('+password'); // Potrzebujemy hasła do porównania
-    adminForLog = admin; // Zapisz admina do logów, nawet jeśli logowanie się nie uda
+    const admin = await AdminUser.findOne({ username }).select('+password'); 
+    adminForLog = admin; 
 
     if (!admin) {
       await logAuditEvent('admin_login_failed', { type: 'system' }, 'warn', {}, { attemptUsername: username, reason: 'Admin not found' }, req);
@@ -35,10 +34,10 @@ const loginAdmin = async (req, res) => {
       return res.status(403).json({ message: 'Admin account is inactive' });
     }
 
-    const isMatch = await bcrypt.compare(password, admin.password); // Bezpośrednie porównanie, bo mamy już hasło
+    const isMatch = await bcrypt.compare(password, admin.password); 
 
     if (isMatch) {
-      const adminResponse = await AdminUser.findById(admin._id); // Pobierz bez hasła do odpowiedzi
+      const adminResponse = await AdminUser.findById(admin._id); 
       await logAuditEvent('admin_login_success', { type: 'admin', id: adminResponse._id }, 'info', {}, {}, req);
       res.json({
         _id: adminResponse._id,
@@ -86,7 +85,7 @@ const changeAdminPassword = async (req, res) => {
   }
 
     const { currentPassword, newPassword, confirmNewPassword } = req.body;
-    const adminId = req.adminUser._id; // Z protectAdmin middleware
+    const adminId = req.adminUser._id; 
 
     if (!currentPassword || !newPassword || !confirmNewPassword) {
         return res.status(400).json({ message: 'Please provide current password, new password, and confirm new password.' });
@@ -102,10 +101,8 @@ const changeAdminPassword = async (req, res) => {
     }
 
     try {
-        // Musimy pobrać admina z jego hasłem, aby porównać currentPassword
         const admin = await AdminUser.findById(adminId).select('+password');
         if (!admin) {
-            // To nie powinno się zdarzyć, jeśli protectAdmin działa poprawnie
             await logAuditEvent('admin_change_password_failed', { type: 'admin', id: adminId }, 'error', {}, { reason: 'Admin not found during password change' }, req);
             return res.status(404).json({ message: 'Admin not found.' });
         }
@@ -116,14 +113,10 @@ const changeAdminPassword = async (req, res) => {
             return res.status(401).json({ message: 'Incorrect current password.' });
         }
 
-        // Ustaw nowe hasło (hook pre-save w AdminUser.js je zahashuje)
         admin.password = newPassword;
         await admin.save();
 
         await logAuditEvent('admin_password_changed', { type: 'admin', id: adminId }, 'admin_action', {}, {}, req);
-
-        // TODO: Rozważ unieważnienie wszystkich innych tokenów JWT dla tego admina
-        // (wymaga blacklistowania tokenów lub mechanizmu sesji)
 
         res.status(200).json({ message: 'Password changed successfully.' });
 
@@ -140,9 +133,6 @@ const logoutAdmin = (req, res) => {
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
     }
-    // W przypadku JWT, serwer nie musi nic specjalnego robić.
-    // Klient powinien usunąć token.
-    // Jeśli implementujesz blacklistowanie, tutaj dodaj token do blacklisty.
     logAuditEvent('admin_logout', { type: 'admin', id: req.adminUser._id }, 'info', {}, {}, req);
     res.status(200).json({ message: 'Admin logged out successfully. Please clear your token.' });
 };

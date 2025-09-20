@@ -1,4 +1,3 @@
-// routes/adminUserRoutes.js
 const express = require('express');
 const { body, param, query } = require('express-validator');
 const {
@@ -44,13 +43,10 @@ router.post('/:userId/generate-test-token', authorizeAdminRole(['admin', 'supera
 
 router.put( 
   '/:userId/role',
-  authorizeAdminRole(['superadmin']), // Tylko superadmin może zmieniać role
+  authorizeAdminRole(['superadmin']),
   [
-    ...userIdValidation, // Użyj istniejącej walidacji dla userId
+    ...userIdValidation, 
     body('role').trim().notEmpty().withMessage('Role is required.')
-        // Możesz dodać .isIn(User.schema.path('role').enumValues).withMessage('Invalid role value.')
-        // ale kontroler już to sprawdza. Jeśli chcesz, aby walidator to robił, musisz mieć dostęp do User.schema tutaj.
-        // Prostsze jest sprawdzenie w kontrolerze.
   ],
   changeUserRole
 );

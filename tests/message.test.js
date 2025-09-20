@@ -1,4 +1,3 @@
-// tests/message.test.js
 const request = require('supertest');
 const app = require('../server');
 const User = require('../models/User');
@@ -11,7 +10,7 @@ const mongoose = require('mongoose');
 describe('Message API (/api/messages)', () => {
     let userOne, userTwo, userThree;
     let tokenOne, tokenTwo, tokenThree;
-    let chatOneTwo; // Czat między userOne i userTwo
+    let chatOneTwo;
 
     beforeAll(async () => {
         await mongoose.connection.collection('users').deleteMany({});
@@ -22,7 +21,7 @@ describe('Message API (/api/messages)', () => {
 
         userOne = await createVerifiedUser({ username: 'msgUserOne', email: 'msgone@example.com' });
         userTwo = await createVerifiedUser({ username: 'msgUserTwo', email: 'msgtwo@example.com' });
-        userThree = await createVerifiedUser({ username: 'msgUserThree', email: 'msgthree@example.com' }); // Użytkownik spoza czatu
+        userThree = await createVerifiedUser({ username: 'msgUserThree', email: 'msgthree@example.com' });
 
         tokenOne = generateUserToken(userOne);
         tokenTwo = generateUserToken(userTwo);
@@ -30,11 +29,9 @@ describe('Message API (/api/messages)', () => {
     });
 
     beforeEach(async () => {
-        // Czyść czaty, wiadomości i znajomości przed każdym testem
         await mongoose.connection.collection('chats').deleteMany({});
         await mongoose.connection.collection('messages').deleteMany({});
         await mongoose.connection.collection('friendships').deleteMany({});
-        // Stwórz czat i znajomość dla userOne i userTwo
         chatOneTwo = await createChat([userOne, userTwo]);
         await createFriendship({ user1: userOne, user2: userTwo, requestedBy: userOne, status: 'accepted' });
     });
@@ -50,7 +47,7 @@ describe('Message API (/api/messages)', () => {
                 .set('Authorization', `Bearer ${tokenOne}`)
                 .send(messageData);
 
-            expect(res.statusCode).toEqual(200); // Kontroler zwraca 200, a nie 201
+            expect(res.statusCode).toEqual(200);
             expect(res.body).toHaveProperty('_id');
             expect(res.body.content).toBe(messageData.content);
             expect(res.body.senderId.username).toBe(userOne.username);
@@ -75,14 +72,14 @@ describe('Message API (/api/messages)', () => {
             const messageData = { chatId: chatOneTwo._id.toString(), content: 'I should not be able to send this' };
             const res = await request(app)
                 .post('/api/messages')
-                .set('Authorization', `Bearer ${tokenThree}`) // userThree próbuje wysłać do czatu One-Two
+                .set('Authorization', `Bearer ${tokenThree}`) 
                 .send(messageData);
-            expect(res.statusCode).toEqual(404); // lub 403, zależy od implementacji
+            expect(res.statusCode).toEqual(404);
             expect(res.body.message).toContain("Chat not found or you are not a participant.");
         });
 
         it('should return a validation error for empty message content', async () => {
-            const messageData = { chatId: chatOneTwo._id.toString(), content: '  ' }; // Pusty/białe znaki
+            const messageData = { chatId: chatOneTwo._id.toString(), content: '  ' };
             const res = await request(app)
                 .post('/api/messages')
                 .set('Authorization', `Bearer ${tokenOne}`)
@@ -93,7 +90,6 @@ describe('Message API (/api/messages)', () => {
         });
 
         it('should not allow sending a message if the friendship with the recipient is blocked', async () => {
-            // Zablokuj znajomość userOne -> userTwo
             await Friendship.updateOne(
                 { $or: [{ user1: userOne._id, user2: userTwo._id }, { user1: userTwo._id, user2: userOne._id }] },
                 { status: 'blocked', isBlocked: true, blockedBy: userOne._id }
@@ -102,10 +98,9 @@ describe('Message API (/api/messages)', () => {
             const messageData = { chatId: chatOneTwo._id.toString(), content: 'This message should be blocked' };
             const res = await request(app)
                 .post('/api/messages')
-                .set('Authorization', `Bearer ${tokenTwo}`) // userTwo próbuje wysłać do userOne
+                .set('Authorization', `Bearer ${tokenTwo}`)
                 .send(messageData);
 
-            // Oczekiwany status zależy od implementacji w `sendMessage`
             expect(res.statusCode).toEqual(403);
             expect(res.body.message).toContain('Cannot send message, user is blocked.');
         });
@@ -113,10 +108,8 @@ describe('Message API (/api/messages)', () => {
 
     describe('GET /api/messages/:chatId', () => {
         beforeEach(async () => {
-        // Dodaj WIĘCEJ wiadomości do czatu, aby paginacja miała sens
-        await Message.deleteMany({ chatId: chatOneTwo._id }); // Wyczyść wiadomości
+        await Message.deleteMany({ chatId: chatOneTwo._id });
         for (let i = 1; i <= 25; i++) {
-            // Stwórz 25 wiadomości, naprzemiennie od userOne i userTwo
             await createMessage({
                 chatId: chatOneTwo,
                 senderId: i % 2 === 0 ? userTwo : userOne,
@@ -127,15 +120,15 @@ describe('Message API (/api/messages)', () => {
 
         it('should fetch the last page of messages by default, sorted chronologically', async () => {
         const res = await request(app)
-            .get(`/api/messages/${chatOneTwo._id}`) // Domyślnie page=1, limit=20
+            .get(`/api/messages/${chatOneTwo._id}`)
             .set('Authorization', `Bearer ${tokenOne}`);
 
         expect(res.statusCode).toEqual(200);
         expect(res.body).toHaveProperty('messages');
         expect(res.body.messages).toBeInstanceOf(Array);
-        expect(res.body.messages.length).toBe(20); // Domyślny limit
-        expect(res.body.messages[0].content).toBe('Message number 6'); // 25 - 20 + 1 = 6
-        expect(res.body.messages[19].content).toBe('Message number 25'); // Ostatnia wiadomość
+        expect(res.body.messages.length).toBe(20);
+        expect(res.body.messages[0].content).toBe('Message number 6');
+        expect(res.body.messages[19].content).toBe('Message number 25');
         expect(res.body.currentPage).toBe(1);
         expect(res.body.totalPages).toBe(2);
         expect(res.body.totalMessages).toBe(25);
@@ -143,14 +136,13 @@ describe('Message API (/api/messages)', () => {
 
 
         it('should handle pagination for messages correctly', async () => {
-            // Pobierz drugą "stronę" starszych wiadomości (czyli pierwsze 5)
             const res = await request(app)
                 .get(`/api/messages/${chatOneTwo._id}?page=2&limit=20`)
                 .set('Authorization', `Bearer ${tokenOne}`);
 
             expect(res.statusCode).toEqual(200);
             expect(res.body.messages).toBeInstanceOf(Array);
-            expect(res.body.messages.length).toBe(5); // Pozostałe 5 wiadomości
+            expect(res.body.messages.length).toBe(5); 
             expect(res.body.messages[0].content).toBe('Message number 1');
             expect(res.body.messages[4].content).toBe('Message number 5');
             expect(res.body.currentPage).toBe(2);
@@ -159,7 +151,7 @@ describe('Message API (/api/messages)', () => {
         it('should not allow fetching messages for a chat if the user is not a participant', async () => {
             const res = await request(app)
                 .get(`/api/messages/${chatOneTwo._id}`)
-                .set('Authorization', `Bearer ${tokenThree}`); // userThree próbuje pobrać wiadomości
+                .set('Authorization', `Bearer ${tokenThree}`); 
             expect(res.statusCode).toEqual(403);
             expect(res.body.message).toContain("You are not authorized to view messages for this chat.");
         });

@@ -1,27 +1,24 @@
-// tests/adminAuth.test.js
 const request = require('supertest');
-const app = require('../server'); // Upewnij się, że server.js eksportuje `app`
-const AdminUser = require('../models/AdminUser'); // Nadal potrzebne do asercji lub specyficznych operacji
+const app = require('../server'); 
+const AdminUser = require('../models/AdminUser');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
-const { createAdmin, createSuperAdmin } = require('./helpers/factories'); // IMPORT HELPERÓW
+const { createAdmin, createSuperAdmin } = require('./helpers/factories'); 
 
 describe('Admin Auth API', () => {
     const baseAdminCredentials = {
-        username: 'testsuperadmin_auth', // Unikalna nazwa dla tego suite'u
+        username: 'testsuperadmin_auth', 
         password: 'superStrongPassword123!',
     };
 
-    // --- Testy dla POST /api/admin/auth/login ---
     describe('POST /api/admin/auth/login', () => {
         let adminForLoginTest;
 
         beforeEach(async () => {
-            // Użyj mongoose.connection.collection do czyszczenia, aby uniknąć problemów z modelem, jeśli jest już używany
             await mongoose.connection.collection('adminusers').deleteMany({ username: baseAdminCredentials.username });
-            adminForLoginTest = await createSuperAdmin({ // Użyj fabryki
+            adminForLoginTest = await createSuperAdmin({ 
                 username: baseAdminCredentials.username,
-                password: baseAdminCredentials.password, // Fabryka powinna obsługiwać hashowanie przez model
+                password: baseAdminCredentials.password, 
             });
         });
 
@@ -54,7 +51,6 @@ describe('Admin Auth API', () => {
         });
 
         it('should not login an inactive admin', async () => {
-            // Zaktualizuj admina stworzonego w beforeEach, aby był nieaktywny
             await AdminUser.updateOne({ _id: adminForLoginTest._id }, { isActive: false });
             const res = await request(app)
                 .post('/api/admin/auth/login')
@@ -66,14 +62,13 @@ describe('Admin Auth API', () => {
         it('should return validation errors for missing credentials', async () => {
             const res = await request(app)
                 .post('/api/admin/auth/login')
-                .send({ username: baseAdminCredentials.username }); // Brak hasła
+                .send({ username: baseAdminCredentials.username }); 
             expect(res.statusCode).toEqual(400);
             expect(res.body).toHaveProperty('errors');
             expect(res.body.errors.some(err => err.path === 'password')).toBe(true);
         });
     });
 
-    // --- Testy dla GET /api/admin/auth/me (chroniona trasa) ---
     describe('GET /api/admin/auth/me', () => {
         let currentAdminToken;
         let currentAdminId;
@@ -82,17 +77,17 @@ describe('Admin Auth API', () => {
 
         beforeEach(async () => {
             await mongoose.connection.collection('adminusers').deleteMany({username: meAdminCredentials.username });
-            const admin = await createAdmin({ // Użyj fabryki
+            const admin = await createAdmin({ 
                 username: meAdminCredentials.username,
                 password: meAdminCredentials.password,
-                role: 'admin' // Może być inny niż superadmin
+                role: 'admin' 
             });
             currentAdminId = admin._id.toString();
 
             const loginRes = await request(app)
                 .post('/api/admin/auth/login')
                 .send(meAdminCredentials);
-            expect(loginRes.statusCode).toBe(200); // Upewnij się, że logowanie się udało
+            expect(loginRes.statusCode).toBe(200);
             currentAdminToken = loginRes.body.token;
             if (!currentAdminToken) throw new Error("Failed to get admin token in GET /me beforeEach");
         });
@@ -113,10 +108,9 @@ describe('Admin Auth API', () => {
         });
 
         it('should not get profile with a regular user token (expecting "token is not an admin token")', async () => {
-            if (!process.env.JWT_ADMIN_SECRET && !process.env.JWT_SECRET) { // Sprawdź, czy jakikolwiek sekret jest dostępny
+            if (!process.env.JWT_ADMIN_SECRET && !process.env.JWT_SECRET) { 
                 throw new Error("Admin or User JWT secret is undefined for user-typed token test!");
             }
-            // Podpisz token użytkownika tym samym sekretem, co token admina, aby przetestować logikę `decoded.type`
             const secretForUserTypeToken = process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET;
             const userTestToken = jwt.sign({ id: new mongoose.Types.ObjectId().toString(), type: 'user' }, secretForUserTypeToken);
 
@@ -128,8 +122,6 @@ describe('Admin Auth API', () => {
         });
     });
 
-
-    // --- Testy dla PUT /api/admin/auth/change-password (chroniona trasa) ---
     describe('PUT /api/admin/auth/change-password', () => {
         let changePassAdminToken;
         const changePassAdminCreds = { username: 'changepw_auth', password: 'oldPassword123' };
@@ -137,7 +129,7 @@ describe('Admin Auth API', () => {
 
         beforeEach(async () => {
             await mongoose.connection.collection('adminusers').deleteMany({username: changePassAdminCreds.username });
-            await createAdmin({ // Użyj fabryki
+            await createAdmin({ 
                 username: changePassAdminCreds.username,
                 password: changePassAdminCreds.password
             });
@@ -193,14 +185,13 @@ describe('Admin Auth API', () => {
         });
     });
 
-    // --- Testy dla POST /api/admin/auth/logout (chroniona trasa) ---
     describe('POST /api/admin/auth/logout', () => {
         let logoutAdminToken;
         const logoutAdminCreds = { username: 'logoutUser_auth', password: 'password123' };
 
         beforeEach(async () => {
             await mongoose.connection.collection('adminusers').deleteMany({username: logoutAdminCreds.username});
-            await createAdmin({ // Użyj fabryki
+            await createAdmin({
                 username: logoutAdminCreds.username,
                 password: logoutAdminCreds.password
             });

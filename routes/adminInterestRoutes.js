@@ -1,7 +1,6 @@
-// routes/adminInterestRoutes.js
 const express = require('express');
 const { body, param, query } = require('express-validator');
-const mongoose = require('mongoose'); // Potrzebne dla mongoose.Types.ObjectId.isValid
+const mongoose = require('mongoose');
 const {
     createInterestCategory, getAllInterestCategories, updateInterestCategory, deleteInterestCategory,
     createInterest, getAllInterestsAdmin, updateInterest, archiveInterest, restoreInterest
@@ -29,7 +28,7 @@ router.route('/categories/:categoryId')
     ], updateInterestCategory)
     .delete(authorizeAdminRole(['superadmin']), categoryIdValidation, deleteInterestCategory);
 
-router.route('/') // Dla /api/admin/interests
+router.route('/')
     .post(authorizeAdminRole(['admin', 'superadmin']), [
         body('name').trim().notEmpty().withMessage('Interest name is required.').isLength({min: 1, max: 100}).withMessage('Interest name must be 1-100 characters.').escape(),
         body('categoryId').optional({checkFalsy: true}).isMongoId().withMessage('Invalid Category ID format for interest.'),
@@ -48,10 +47,10 @@ router.route('/:interestId')
         ...interestIdValidation,
         body('name').optional({checkFalsy: true}).trim().isLength({min:1, max: 100}).withMessage('Interest name must be 1-100 characters.').escape(),
         body('categoryId').optional({checkFalsy: true}).custom((value) => {
-            if (value === '' || value === null) return true; // Pozwól na usunięcie kategorii
-            if (!mongoose.Types.ObjectId.isValid(value)) throw new Error('Invalid Category ID format provided.'); // Błąd rzucony przez custom
+            if (value === '' || value === null) return true;
+            if (!mongoose.Types.ObjectId.isValid(value)) throw new Error('Invalid Category ID format provided.'); 
             return true;
-        }).withMessage('Invalid Category ID format for interest update.'), // Ogólny komunikat dla custom
+        }).withMessage('Invalid Category ID format for interest update.'),
         body('description').optional({checkFalsy: true}).trim().isLength({max: 500}).withMessage('Interest description max 500 chars.').escape(),
         body('isArchived').optional().isBoolean().withMessage('isArchived must be a boolean.').toBoolean()
     ], updateInterest)

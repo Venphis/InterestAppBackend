@@ -1,4 +1,3 @@
-// controllers/adminReportsController.js
 const Report = require('../models/Report');
 const logAuditEvent = require('../utils/auditLogger');
 const { validationResult } = require('express-validator');
@@ -22,7 +21,6 @@ const getAllReports = async (req, res) => {
     if (req.query.reportType) {
         query.reportType = req.query.reportType;
     }
-    // Można dodać filtrowanie po reportedBy, reportedUser itp.
 
     try {
         const reports = await Report.find(query)
@@ -90,9 +88,8 @@ const updateReport = async (req, res) => {
         return res.status(400).json({ errors: errors.array() });
     }
     const { status, adminNotes } = req.body;
-    // req.adminUser jest dostępne z protectAdmin middleware
 
-    if (!status && adminNotes === undefined) { // Pozwól na aktualizację tylko notatek lub tylko statusu
+    if (!status && adminNotes === undefined) { 
         return res.status(400).json({ message: 'Either status or adminNotes must be provided for update.' });
     }
 
@@ -105,7 +102,6 @@ const updateReport = async (req, res) => {
         const oldStatus = report.status;
 
         if (status) {
-            // Walidacja czy status jest dozwolony
             const allowedStatuses = Report.schema.path('status').enumValues;
             if (!allowedStatuses.includes(status)) {
                 return res.status(400).json({ message: `Invalid status value. Allowed: ${allowedStatuses.join(', ')}` });
@@ -115,7 +111,7 @@ const updateReport = async (req, res) => {
         if (adminNotes !== undefined) {
             report.adminNotes = adminNotes;
         }
-        report.reviewedBy = req.adminUser._id; // Zapisz ID admina, który zaktualizował
+        report.reviewedBy = req.adminUser._id;
 
         const updatedReport = await report.save();
 

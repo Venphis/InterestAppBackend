@@ -1,21 +1,15 @@
-// controllers/adminInterestsController.js
 const Interest = require('../models/Interest');
 const InterestCategory = require('../models/InterestCategory');
-const UserInterest = require('../models/UserInterest'); // Potrzebne do sprawdzenia powiązań
+const UserInterest = require('../models/UserInterest'); 
 const { validationResult } = require('express-validator');
 const logAuditEvent = require('../utils/auditLogger');
-
-// createInterestCategory - bez zmian
-// getAllInterestCategories - bez zmian
-// updateInterestCategory - bez zmian
-// deleteInterestCategory - bez zmian (ale pamiętaj o TODO co do zainteresowań w usuwanej kategorii)
 
 const createInterestCategory = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     const { name, description } = req.body;
     try {
-        const categoryExists = await InterestCategory.findOne({ name: { $regex: `^${name}$`, $options: 'i' } }); // Case-insensitive check
+        const categoryExists = await InterestCategory.findOne({ name: { $regex: `^${name}$`, $options: 'i' } }); 
         if (categoryExists) {
             return res.status(400).json({ message: 'Interest category with this name already exists.' });
         }
@@ -89,7 +83,7 @@ const deleteInterestCategory = async (req, res) => {
 
 // --- Interest Management ---
 
-const createInterest = async (req, res, next) => { // Dodano next
+const createInterest = async (req, res, next) => { 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
@@ -101,11 +95,10 @@ const createInterest = async (req, res, next) => { // Dodano next
             const catExists = await InterestCategory.findById(categoryId);
             if (!catExists) return res.status(404).json({ message: 'Specified interest category not found.' });
         }
-        // POPRAWKA: Sprawdzanie duplikatów (case-insensitive)
         const duplicate = await Interest.findOne({
-          name: { $regex: `^${name}$`, $options: 'i' }, // Case-insensitive exact match
+          name: { $regex: `^${name}$`, $options: 'i' },
           category: categoryId,
-          isArchived: { $ne: true } // Znajdź, jeśli isArchived jest false LUB nie istnieje (undefined)
+          isArchived: { $ne: true }
         });
 
         if (duplicate) {
@@ -129,9 +122,8 @@ const createInterest = async (req, res, next) => { // Dodano next
           { interestName: name, categoryId },
           req
         );
-        // Zwróć z populacją, aby frontend od razu miał nazwę kategorii
         const populatedInterest = await Interest.findById(interest._id).populate('category', 'name');
-        res.status(201).json(populatedInterest); // Zmieniono message na zwracanie obiektu
+        res.status(201).json(populatedInterest);
     } catch (error) {
         console.error('[adminInterestsCtrl] Admin Create Interest Error:', error);
         if (error.code === 11000) return res.status(400).json({ message: 'An interest with this name (and category) already exists or violates a unique index.' });
@@ -163,7 +155,7 @@ const getAllInterestsAdmin = async (req, res) => {
     }
 };
 
-const updateInterest = async (req, res, next) => { // Dodano next
+const updateInterest = async (req, res, next) => { 
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     const { name, categoryId, description, isArchived } = req.body;
@@ -171,7 +163,7 @@ const updateInterest = async (req, res, next) => { // Dodano next
         const interest = await Interest.findById(req.params.interestId);
         if (!interest) return res.status(404).json({ message: 'Interest not found.' });
         const oldData = { name: interest.name, category: interest.category, description: interest.description, isArchived: interest.isArchived };
-        if (categoryId === null || categoryId === '') { // Jawne usunięcie kategorii
+        if (categoryId === null || categoryId === '') {
             interest.category = null;
         } else if (categoryId) {
             const catExists = await InterestCategory.findById(categoryId);
@@ -198,12 +190,11 @@ const updateInterest = async (req, res, next) => { // Dodano next
 };
 
 
-// Zmieniono z deleteInterest na archiveInterest
 // @desc    Archive an interest (soft delete)
 // @route   DELETE /api/admin/interests/:interestId (lub PUT .../archive)
 // @access  Private (Admin/Superadmin)
-const archiveInterest = async (req, res, next) => { // Dodano next
-    const errors = validationResult(req); // Jeśli masz walidatory na param w trasie
+const archiveInterest = async (req, res, next) => { 
+    const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     try {
         const { interestId } = req.params;
@@ -215,9 +206,9 @@ const archiveInterest = async (req, res, next) => { // Dodano next
             return res.status(400).json({ message: 'Interest is already archived.' });
         }
         interest.isArchived = true;
-        await interest.save({ validateBeforeSave: false }); // Zapisz bez walidacji, bo zmieniamy tylko flagę
+        await interest.save({ validateBeforeSave: false }); 
 
-        await logAuditEvent( // Upewnij się, że logAuditEvent jest dostępne
+        await logAuditEvent(
             'admin_archived_interest',
             { type: 'admin', id: req.adminUser._id },
             'admin_action',
@@ -225,7 +216,6 @@ const archiveInterest = async (req, res, next) => { // Dodano next
             { interestName: interest.name },
             req
         );
-        // Zwróć zaktualizowany obiekt, aby frontend miał spójne dane
         const populatedInterest = await Interest.findById(interest._id).populate('category', 'name');
         res.status(200).json({ message: 'Interest archived successfully.', interest: populatedInterest });
     } catch (error) {
@@ -266,6 +256,6 @@ module.exports = {
     createInterest,
     getAllInterestsAdmin,
     updateInterest,
-    archiveInterest, // Zmieniono
-    restoreInterest  // Dodano
+    archiveInterest,
+    restoreInterest  
 };

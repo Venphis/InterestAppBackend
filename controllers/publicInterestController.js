@@ -1,4 +1,3 @@
-// controllers/publicInterestController.js
 const Interest = require('../models/Interest');
 const InterestCategory = require('../models/InterestCategory');
 const { validationResult } = require('express-validator');
@@ -9,7 +8,6 @@ const getPublicInterestCategories = async (req, res) => {
         return res.status(400).json({ errors: errors.array() });
     }
     try {
-        // Można dodać filtrowanie kategorii, jeśli np. admin może je ukrywać
         const categories = await InterestCategory.find().sort('name');
         res.json(categories);
     } catch (error) {
@@ -24,7 +22,7 @@ const getPublicInterests = async (req, res) => {
         return res.status(400).json({ errors: errors.array() });
     }
     const { categoryId, name } = req.query;
-    const query = { isArchived: false }; // TYLKO AKTYWNE
+    const query = { isArchived: false };
     if (categoryId) query.category = categoryId;
     if (name) query.name = { $regex: name, $options: 'i' };
 

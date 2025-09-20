@@ -1,4 +1,3 @@
-// controllers/authController.js
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
@@ -76,11 +75,10 @@ const registerUser = async (req, res) => {
         console.error('Registration Error:', error);
         await logAuditEvent('user_registration_error', {type: 'system'}, 'error', {}, {error: error.message, attemptEmail: email, attemptUsername: username}, req);
 
-        if (error.name === 'ValidationError') { // Błąd z Mongoose
+        if (error.name === 'ValidationError') { 
             const messages = Object.values(error.errors).map(val => val.message);
             return res.status(400).json({ message: messages.join(', ') });
         }
-        // Nie usuwamy użytkownika w przypadku błędu, aby uniknąć race conditions lub utraty danych
         res.status(500).json({ message: 'Server Error during registration. Please try again.' });
     }
 };
@@ -209,8 +207,6 @@ const loginUser = async (req, res) => {
 
         if (isMatch) {
             await logAuditEvent('user_login_success', { type: 'user', id: user._id }, 'info', {}, {}, req);
-            // Nie ma potrzeby ponownego User.findById, req.user z 'protect' byłby lepszy, ale tu nie ma 'protect'
-            // Model user po findOne jest wystarczający, o ile nie wybieraliśmy specyficznych pól.
             res.json({
                 _id: user._id,
                 username: user.username,
@@ -244,7 +240,6 @@ const forgotPassword = async (req, res) => {
         if (user) {
             if (!user.isEmailVerified) {
                  await logAuditEvent('user_forgot_password_attempt_unverified_email', { type: 'user', id: user._id }, 'info', {}, {}, req);
-                 // Nadal zwracamy ogólny komunikat, aby nie ujawniać statusu konta
                  return res.status(200).json({ message: 'If an account with that email exists and is active, a password reset link has been sent.' });
             }
             if (user.isBanned) {
@@ -265,12 +260,10 @@ const forgotPassword = async (req, res) => {
         } else {
             await logAuditEvent('user_forgot_password_attempt_nonexistent_email', { type: 'system' }, 'info', {}, { attemptEmail: email }, req);
         }
-        // Zawsze zwracaj ten sam komunikat, aby nie ujawniać, czy email istnieje w bazie
         res.status(200).json({ message: 'If an account with that email exists and is active, a password reset link has been sent.' });
     } catch (error) {
         console.error('Forgot Password Error:', error);
         await logAuditEvent('user_forgot_password_error', {type: 'system'}, 'error', {}, {error: error.message, attemptEmail: email}, req);
-        // Nawet przy błędzie serwera, dla bezpieczeństwa można zwrócić ten sam ogólny komunikat
         res.status(200).json({ message: 'If an account with that email exists and is active, and an error occurred processing your request, we are looking into it.' });
     }
 };
@@ -290,7 +283,7 @@ const resetPassword = async (req, res) => {
             passwordResetTokenExpires: { $gt: Date.now() },
             isDeleted: false,
             isBanned: false
-        }).select('+password'); // Potrzebujemy hasła do jego nadpisania
+        }).select('+password'); 
 
         if (!user) {
             await logAuditEvent('user_password_reset_failed', { type: 'system' }, 'warn', {}, { reason: 'Invalid/expired token or inactive/deleted/banned user', tokenAttempt: token }, req);
@@ -302,10 +295,7 @@ const resetPassword = async (req, res) => {
         user.passwordResetTokenExpires = undefined;
         if (!user.isEmailVerified) user.isEmailVerified = true;
 
-        await user.save(); // Hook pre-save zahashuje nowe hasło
-
-        // KONCEPCYJNE - miejsce na blacklistowanie starych tokenów JWT użytkownika
-        // await BlacklistService.invalidateUserTokens(user._id);
+        await user.save(); 
 
         await logAuditEvent('user_password_reset_success', { type: 'user', id: user._id }, 'admin_action', {}, {}, req); // admin_action, bo to krytyczna zmiana
         res.status(200).json({ message: 'Password reset successfully. You can now log in with your new password.' });

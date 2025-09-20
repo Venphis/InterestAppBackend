@@ -1,4 +1,3 @@
-// routes/reportRoutes.js
 const express = require('express');
 const { body } = require('express-validator');
 const { createReport } = require('../controllers/reportController');

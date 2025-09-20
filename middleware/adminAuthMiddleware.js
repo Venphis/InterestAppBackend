@@ -1,22 +1,18 @@
-// middleware/adminAuthMiddleware.js
 const jwt = require('jsonwebtoken');
 const AdminUser = require('../models/AdminUser');
-// require('dotenv').config(); // Niepotrzebne, jeśli NODE_OPTIONS działa
 
 const protectAdmin = async (req, res, next) => {
-    // 1. Sprawdź, czy nagłówek Authorization istnieje i ma poprawny format
     if (
         !req.headers.authorization ||
-        !req.headers.authorization.startsWith('Bearer ') // Ważna spacja po 'Bearer '
+        !req.headers.authorization.startsWith('Bearer ') 
     ) {
         return res
             .status(401)
-            .json({ message: 'Not authorized, no admin token or malformed header' }); // Ujednolicony komunikat
+            .json({ message: 'Not authorized, no admin token or malformed header' }); 
     }
 
     const token = req.headers.authorization.split(' ')[1];
 
-    // Jeśli token jest pusty po split (np. tylko "Bearer ")
     if (!token) {
         return res.status(401).json({ message: 'Not authorized, no admin token provided' });
     }
@@ -32,7 +28,6 @@ const protectAdmin = async (req, res, next) => {
         const decoded = jwt.verify(token, secretToUse);
 
         if (decoded.type !== 'admin') {
-            // Zgodnie z sugestią O3 i Twoją asercją
             return res.status(401).json({ message: 'token is not an admin token' });
         }
 
@@ -46,7 +41,6 @@ const protectAdmin = async (req, res, next) => {
         if (error instanceof jwt.JsonWebTokenError) {
             return res.status(401).json({ message: `Not authorized, admin token error: ${error.message}` });
         }
-        // Inne nieoczekiwane błędy
         return res.status(500).json({ message: 'Not authorized, server error during admin token processing' });
     }
 };

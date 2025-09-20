@@ -1,4 +1,3 @@
-// controllers/adminAuditLogController.js
 const AuditLog = require('../models/AuditLog');
 const { validationResult } = require('express-validator');
 
@@ -27,8 +26,7 @@ const getAuditLogs = async (req, res) => {
 
     try {
         const logs = await AuditLog.find(query)
-                                   .populate('actorId', 'username') // Populate username if actorId is User or AdminUser
-                                   // .populate('targetId') // Może być różne, zależy od targetType
+                                   .populate('actorId', 'username')
                                    .sort({ timestamp: -1 })
                                    .skip(skip)
                                    .limit(limit);

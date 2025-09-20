@@ -1,4 +1,3 @@
-// models/Friendship.js
 const mongoose = require('mongoose');
 
 const FriendshipSchema = new mongoose.Schema({
@@ -28,7 +27,6 @@ const FriendshipSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-// POPRAWKA O3 (pkt 4a) - Hook do sortowania ID przed walidacją/zapisem
 FriendshipSchema.pre('validate', function (next) {
   if (this.user1 && this.user2 && this.user1.toString() > this.user2.toString()) {
     [this.user1, this.user2] = [this.user2, this.user1];
@@ -36,12 +34,9 @@ FriendshipSchema.pre('validate', function (next) {
   next();
 });
 
-// ── Unikalny duet user1 + user2 ─────────────────────────────────
 FriendshipSchema.index({ user1: 1, user2: 1 }, { unique: true });
 
 FriendshipSchema.index({ user1: 1, status: 1, isBlocked: 1 });
 FriendshipSchema.index({ user2: 1, status: 1, isBlocked: 1 });
-
-// Usunięto poprzedni hook pre('save') dotyczący isBlocked, logika przeniesiona do kontrolerów
 
 module.exports = mongoose.model('Friendship', FriendshipSchema);

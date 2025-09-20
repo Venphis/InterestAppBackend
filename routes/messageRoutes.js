@@ -1,8 +1,7 @@
-// routes/messageRoutes.js
 const express = require('express');
 const { body, param, query } = require('express-validator');
 const { protect } = require('../middleware/authMiddleware');
-const { sendMessage, allMessages } = require('../controllers/chatController'); // Kontrolery są w chatController
+const { sendMessage, allMessages } = require('../controllers/chatController');
 const router = express.Router();
 
 router.use(protect);
@@ -16,7 +15,6 @@ router.post('/', [
 
 router.get('/:chatId', [
     ...chatIdValidation,
-    // Walidacja dla query params paginacji
     query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer').toInt(),
     query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100').toInt()
 ], allMessages);

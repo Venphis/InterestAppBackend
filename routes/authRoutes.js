@@ -1,4 +1,3 @@
-// routes/authRoutes.js
 const express = require('express');
 const { body, param } = require('express-validator');
 const {
@@ -6,8 +5,8 @@ const {
     loginUser,
     verifyEmail,
     resendVerificationEmail,
-    forgotPassword, // Dodane
-    resetPassword   // Dodane
+    forgotPassword, 
+    resetPassword 
 } = require('../controllers/authController');
 const router = express.Router();
 
@@ -25,7 +24,7 @@ router.post('/login', [
 router.get('/verify-email/:token', [
     param('token')
         .isHexadecimal().withMessage('Token must be hexadecimal')
-        .isLength({ min: 64, max: 64 }).withMessage('Token must be 64 characters long') // ZMIANA DŁUGOŚCI na 64
+        .isLength({ min: 64, max: 64 }).withMessage('Token must be 64 characters long') 
 ], verifyEmail);
 
 router.post('/resend-verification-email', [
@@ -39,7 +38,7 @@ router.post('/forgot-password', [
 router.put('/reset-password/:token', [
     param('token')
         .isHexadecimal().withMessage('Token must be hexadecimal')
-        .isLength({ min: 64, max: 64 }).withMessage('Token must be 64 characters long'), // ZMIANA DŁUGOŚCI na 64
+        .isLength({ min: 64, max: 64 }).withMessage('Token must be 64 characters long'), 
     body('password').isLength({ min: 6, max: 100 }).withMessage('Password must be between 6 and 100 characters')
 ], resetPassword);
 

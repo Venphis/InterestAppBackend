@@ -1,4 +1,3 @@
-// routes/adminAuditLogRoutes.js
 const express = require('express');
 const { query } = require('express-validator');
 const { getAuditLogs } = require('../controllers/adminAuditLogController');
@@ -25,7 +24,7 @@ router.get('/', [
     query('endDate').optional().isISO8601().toDate().withMessage('Invalid end date format (YYYY-MM-DD or ISO8601).')
         .custom((value, { req }) => {
             if (req.query.startDate && value && new Date(value) < new Date(req.query.startDate)) {
-                throw new Error('End date cannot be before start date.'); // Ten komunikat jest z `throw new Error`
+                throw new Error('End date cannot be before start date.');
             }
             return true;
         })

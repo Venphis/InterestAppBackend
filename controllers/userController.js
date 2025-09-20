@@ -1,9 +1,8 @@
-// controllers/userController.js
 const User = require('../models/User');
 const UserInterest = require('../models/UserInterest');
 const Interest = require('../models/Interest'); 
-const logAuditEvent = require('../utils/auditLogger'); // Dodaj, jeśli potrzebne
-const fs = require('fs'); // Do usuwania starych avatarów
+const logAuditEvent = require('../utils/auditLogger');
+const fs = require('fs');
 const path = require('path');
 const { validationResult } = require('express-validator');
 
@@ -16,19 +15,14 @@ const getUserProfile = async (req, res) => {
         return res.status(400).json({ errors: errors.array() });
     }
   try {
-    // req.user jest już pobrany przez middleware 'protect' bez hasła
-    // Opcjonalnie: Pobierz i dołącz zainteresowania użytkownika
     const userInterests = await UserInterest.find({ userId: req.user._id })
-                                            .populate('interestId', 'name category'); // Pobierz nazwę i kategorię zainteresowania
+                                            .populate('interestId', 'name category');
 
-
-
-    // Zwróć profil razem z zainteresowaniami
     res.json({
-        ...req.user.toObject(), // Konwertuj dokument Mongoose na zwykły obiekt
-        interests: userInterests.map(ui => ({ // Uprość strukturę zainteresowań
-            userInterestId: ui._id, // ID wpisu UserInterest (do usuwania/edycji)
-            interest: ui.interestId, // Obiekt Interest
+        ...req.user.toObject(), 
+        interests: userInterests.map(ui => ({ 
+            userInterestId: ui._id, 
+            interest: ui.interestId,
             customDescription: ui.customDescription
         }))
     });
@@ -52,7 +46,6 @@ const updateUserProfile = async (req, res) => {
 
         const profileUpdates = req.body.profile || {};
         user.profile.displayName = profileUpdates.displayName || user.profile.displayName;
-        // user.profile.avatarUrl - to będzie aktualizowane przez osobny endpoint
         user.profile.gender = profileUpdates.gender || user.profile.gender;
         user.profile.birthDate = profileUpdates.birthDate || user.profile.birthDate;
         user.profile.location = profileUpdates.location || user.profile.location;
@@ -63,7 +56,7 @@ const updateUserProfile = async (req, res) => {
         const userInterests = await UserInterest.find({ userId: updatedUser._id }).populate('interestId', 'name category');
         await logAuditEvent('user_profile_updated_text', { type: 'user', id: req.user._id }, 'info', {}, { updatedFields: Object.keys(profileUpdates) }, req);
         res.json({
-            ...updatedUser.toObject({ virtuals: true }), // Dodaj virtuals jeśli masz np. age
+            ...updatedUser.toObject({ virtuals: true }), 
              interests: userInterests.map(ui => ({
                 userInterestId: ui._id,
                 interest: ui.interestId,
@@ -76,7 +69,6 @@ const updateUserProfile = async (req, res) => {
              const messages = Object.values(error.errors).map(val => val.message);
              return res.status(400).json({ message: messages.join(', ') });
          }
-         // Obsługa błędu duplikatu jeśli zmieniasz email/username
          if (error.code === 11000) {
              return res.status(400).json({ message: 'Username or Email already taken' });
          }
@@ -87,7 +79,7 @@ const updateUserProfile = async (req, res) => {
 // @desc    Find users by username or display name
 // @route   GET /api/users/search?q=...
 // @access  Private
-const findUsers = async (req, res, next) => { // Dodano next
+const findUsers = async (req, res, next) => { 
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
@@ -102,15 +94,15 @@ const findUsers = async (req, res, next) => { // Dodano next
     try {
         const users = await User.find({
             $or: keywordConditions,
-            _id: { $ne: req.user._id }, // Wyklucz samego siebie
-            isDeleted: false,           // --- POPRAWKA ---
-            isBanned: false             // --- POPRAWKA ---
+            _id: { $ne: req.user._id }, 
+            isDeleted: false,          
+            isBanned: false            
         }).select('username email profile');
 
         res.json(users);
     } catch (error) {
         console.error('[userController.js] Search Users Error:', error);
-        next(error); // Przekaż do globalnego error handlera
+        next(error); 
     }
 };
 
@@ -128,11 +120,6 @@ const addUserInterest = async (req, res, next) => { // Dodaj next
     }
     const { interestId, customDescription } = req.body;
     const userId = req.user._id;
-
-    // To sprawdzenie nie jest już potrzebne, bo express-validator robi to w trasie
-    // if (!interestId) {
-    //     return res.status(400).json({ message: 'Interest ID is required' });
-    // }
 
     try {
         const interest = await Interest.findById(interestId);
@@ -152,21 +139,19 @@ const addUserInterest = async (req, res, next) => { // Dodaj next
             customDescription: customDescription || ''
         });
 
-        // Logowanie zdarzenia
         await logAuditEvent('user_added_interest', { type: 'user', id: userId }, 'info', { type: 'interest', id: interestId }, { userInterestId: newUserInterest._id }, req);
 
-        // Zwróć nowo dodane zainteresowanie z populacją
         const populatedInterest = await UserInterest.findById(newUserInterest._id)
                                                   .populate('interestId', 'name category isArchived');
 
-        res.status(201).json(populatedInterest.toObject()); // Użyj .toObject() dla spójności
+        res.status(201).json(populatedInterest.toObject()); 
 
     } catch (error) {
         console.error('[userController] Add User Interest Error:', error);
          if (error.code === 11000) {
              return res.status(400).json({ message: 'Interest already added to profile (database constraint).' });
          }
-        next(error); // Przekaż do globalnego error handlera
+        next(error); 
     }
 };
 
@@ -182,7 +167,7 @@ const updateUserInterest = async (req, res) => {
     const { customDescription } = req.body;
     const userId = req.user._id;
 
-    if (customDescription === undefined) { // Pozwól na ustawienie pustego opisu
+    if (customDescription === undefined) { 
          return res.status(400).json({ message: 'customDescription is required in body' });
     }
 
@@ -230,7 +215,7 @@ const removeUserInterest = async (req, res) => {
             return res.status(404).json({ message: 'Interest not found on user profile or you do not have permission' });
         }
 
-        await userInterest.deleteOne(); // Użyj deleteOne() zamiast remove()
+        await userInterest.deleteOne(); 
 
         res.status(200).json({ message: 'Interest removed successfully' });
 
@@ -249,20 +234,18 @@ const updateUserAvatar = async (req, res) => {
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
     }
-    if (!req.file) { // req.file jest dodawane przez multer
+    if (!req.file) { 
         return res.status(400).json({ message: 'No avatar image file uploaded.' });
     }
 
     try {
         const user = await User.findById(req.user._id);
         if (!user) {
-            // Usuń wgrany plik, jeśli użytkownik nie istnieje (choć to nie powinno się zdarzyć z protect)
             fs.unlink(req.file.path, (err) => { if (err) console.error("Error deleting orphaned avatar:", err); });
             return res.status(404).json({ message: 'User not found.' });
         }
 
-        // Usuń stary avatar, jeśli istnieje i nie jest domyślnym
-        if (user.profile.avatarUrl && !user.profile.avatarUrl.includes('default')) { // Załóżmy, że domyślne avatary nie są w /public/uploads
+        if (user.profile.avatarUrl && !user.profile.avatarUrl.includes('default')) { 
             const oldAvatarPathName = user.profile.avatarUrl.split('/public/')[1];
             if (oldAvatarPathName) {
                 const oldAvatarFullPath = path.join(__dirname, '..', 'public', oldAvatarPathName);
@@ -274,9 +257,6 @@ const updateUserAvatar = async (req, res) => {
             }
         }
 
-        // Zapisz ścieżkę do nowego avatara
-        // req.file.path to pełna ścieżka systemowa
-        // Chcemy zapisać względny URL dostępny przez serwer statyczny
         const relativePath = `/public/uploads/avatars/${req.file.filename}`;
         user.profile.avatarUrl = relativePath;
         await user.save();
@@ -289,8 +269,8 @@ const updateUserAvatar = async (req, res) => {
 
         res.json({
             message: 'Avatar updated successfully.',
-            avatarUrl: relativePath, // Zwróć nowy URL avatara
-            user: { // Możesz zwrócić zaktualizowany obiekt użytkownika
+            avatarUrl: relativePath, 
+            user: { 
                 _id: user._id,
                 username: user.username,
                 profile: user.profile
@@ -299,7 +279,6 @@ const updateUserAvatar = async (req, res) => {
 
     } catch (error) {
         console.error('Update Avatar Error:', error);
-        // Usuń wgrany plik w przypadku błędu zapisu do bazy
         fs.unlink(req.file.path, (err) => { if (err) console.error("Error deleting uploaded avatar on DB error:", err); });
         await logAuditEvent('user_avatar_update_error', { type: 'user', id: req.user._id }, 'error', {}, { error: error.message }, req);
         res.status(500).json({ message: 'Server error updating avatar.' });
@@ -311,8 +290,8 @@ module.exports = {
     getUserProfile,
     updateUserProfile,
     findUsers,
-    addUserInterest, // Dodane
-    updateUserInterest, // Dodane
-    removeUserInterest, // Dodane
+    addUserInterest,
+    updateUserInterest,
+    removeUserInterest, 
     updateUserAvatar,
 };

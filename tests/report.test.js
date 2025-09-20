@@ -1,4 +1,3 @@
-// tests/report.test.js
 const request = require('supertest');
 const app = require('../server');
 const User = require('../models/User');
@@ -7,8 +6,6 @@ const Report = require('../models/Report');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const { createVerifiedUser, createMessage, generateUserToken } = require('./helpers/factories');
-
-// Globalne beforeEach z jest.setup.js czyści mocki.
 
 describe('Report API (User Perspective)', () => {
     let reporterUser;
@@ -19,7 +16,6 @@ describe('Report API (User Perspective)', () => {
     beforeAll(async () => {
         await mongoose.connection.collection('users').deleteMany({});
         await mongoose.connection.collection('messages').deleteMany({});
-        // Czyszczenie Report w beforeEach każdego describe dla POST
 
         reporterUser = await createVerifiedUser({ username: 'reporterMain_reports', email: 'reporterMain_reports@example.com' });
         reporterToken = generateUserToken(reporterUser);
@@ -143,16 +139,15 @@ describe('Report API (User Perspective)', () => {
 
         it('should not allow creating a report if not logged in (no token)', async () => {
         const reportData = {
-            reportedUserId: userToReport._id.toString(), // userToReport z beforeAll
+            reportedUserId: userToReport._id.toString(),
             reportType: 'harassment',
             reason: 'This should fail without a token.'
         };
         const res = await request(app)
             .post('/api/reports')
-            // Brak .set('Authorization', ...)
             .send(reportData);
 
-        expect(res.statusCode).toEqual(401); // Oczekiwany błąd od middleware 'protect'
+        expect(res.statusCode).toEqual(401);
         expect(res.body.message).toContain('Not authorized, no token or malformed header');
         });
 

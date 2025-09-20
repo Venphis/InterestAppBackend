@@ -1,10 +1,9 @@
-// controllers/chatController.js
 const Chat = require('../models/Chat');
 const Message = require('../models/Message');
 const User = require('../models/User');
-const Friendship = require('../models/Friendship'); // <-- IMPORT Friendship
+const Friendship = require('../models/Friendship');
 const { validationResult } = require('express-validator');
-const logAuditEvent = require('../utils/auditLogger'); // <-- IMPORT AuditLogger
+const logAuditEvent = require('../utils/auditLogger'); 
 const mongoose = require('mongoose');
 
 const accessChat = async (req, res, next) => {
@@ -14,7 +13,6 @@ const accessChat = async (req, res, next) => {
     const { userId } = req.body;
     const currentUserId = req.user._id;
 
-    // POPRAWKA: Nie można tworzyć czatu z samym sobą
     if (currentUserId.equals(userId)) {
         return res.status(400).json({ message: 'Cannot create a chat with yourself' });
     }
@@ -24,13 +22,13 @@ const accessChat = async (req, res, next) => {
         if (!recipientUser) return res.status(404).json({ message: "Recipient user not found, deleted, or banned" });
 
         let chat = await Chat.findOne({
-            participants: { $all: [currentUserId, userId], $size: 2 } // $size: 2 zapewnia, że to czat 1-na-1
+            participants: { $all: [currentUserId, userId], $size: 2 } 
         })
         .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken", match: { isDeleted: false } })
         .populate({ path: "lastMessage", populate: { path: "senderId", select: "username profile.avatarUrl", match: { isDeleted: false } } });
 
         if (chat) {
-            if (chat.participants.length < 2) { // Jeśli jeden z userów został usunięty/zbanowany
+            if (chat.participants.length < 2) { 
                 return res.status(404).json({ message: 'Chat is inaccessible as one of the participants is inactive.' });
             }
             return res.status(200).json(chat);
@@ -58,7 +56,7 @@ const fetchChats = async (req, res, next) => {
             .populate({ path: "participants", select: "-password", match: { isDeleted: false } })
             .populate({ path: "lastMessage", populate: { path: "senderId", select: "username profile.avatarUrl", match: { isDeleted: false } } })
             .sort({ lastMessageTimestamp: -1 })
-            .lean(); // Użyj lean dla lepszej wydajności
+            .lean(); 
 
         const validChats = chats.filter(chat => chat.participants && chat.participants.length > 1);
         res.status(200).json(validChats);
@@ -77,16 +75,14 @@ const sendMessage = async (req, res, next) => {
     try {
         const chat = await Chat.findOne({
             _id: chatId,
-            participants: senderId, // Sprawdź, czy nadawca jest uczestnikiem
-            'participants.isDeleted': { $ne: true } // Upewnij się, że nie jest usunięty (choć protect middleware powinien to załatwić)
-        }).populate('participants'); // Pobierz uczestników
+            participants: senderId, 
+            'participants.isDeleted': { $ne: true } 
+        }).populate('participants');
 
-        // POPRAWKA: Sprawdź, czy czat istnieje i czy użytkownik jest jego uczestnikiem
         if (!chat) {
             return res.status(404).json({ message: "Chat not found or you are not a participant." });
         }
 
-        // POPRAWKA: Sprawdź, czy znajomość jest zablokowana (dla czatów 1-na-1)
         if (chat.participants.length === 2) {
             const recipient = chat.participants.find(p => !p._id.equals(senderId));
             if (recipient) {
@@ -122,7 +118,7 @@ const sendMessage = async (req, res, next) => {
         }
 
         await logAuditEvent('user_sent_message', { type: 'user', id: senderId }, 'info', { type: 'chat', id: chatId }, { messageLength: content.length }, req);
-        res.status(200).json(message); // Zwróć 200, a nie 201 (bo tworzysz wiadomość, a nie czat)
+        res.status(200).json(message); 
 
     } catch (error) {
         console.error('[chatCtrl] Send Message Error:', error);
@@ -139,26 +135,20 @@ const allMessages = async (req, res, next) => {
             return res.status(403).json({ message: "You are not authorized to view messages for this chat." });
         }
 
-        // --- LOGIKA PAGINACJI ---
-        const limit = parseInt(req.query.limit) || 20; // Domyślnie 20 wiadomości na stronę
-        const page = parseInt(req.query.page) || 1;   // Domyślnie pierwsza strona
+        const limit = parseInt(req.query.limit) || 20; 
+        const page = parseInt(req.query.page) || 1;  
         const skip = (page - 1) * limit;
 
-        // Pobierz łączną liczbę wiadomości dla tego czatu (do informacji o paginacji)
         const totalMessages = await Message.countDocuments({ chatId: req.params.chatId });
 
-        // Pobierz wiadomości dla danej strony, sortując od NAJNOWSZYCH
-        // Aplikacje czatu zwykle ładują najnowsze wiadomości i dociągają starsze przy scrollowaniu w górę
         const messages = await Message.find({ chatId: req.params.chatId })
             .populate({ path: "senderId", select: "username email profile.avatarUrl", match: { isDeleted: false } })
-            // .populate("chatId") // Niepotrzebne
-            .sort({ createdAt: -1 }) // Sortuj od najnowszych
+            .sort({ createdAt: -1 }) 
             .skip(skip)
             .limit(limit);
 
-        // Zwracamy wiadomości i informacje o paginacji
         res.json({
-            messages: messages.reverse(), // Odwróć, aby na kliencie były w porządku chronologicznym (najstarsza na górze)
+            messages: messages.reverse(), 
             currentPage: page,
             totalPages: Math.ceil(totalMessages / limit),
             totalMessages

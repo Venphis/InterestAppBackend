@@ -1,4 +1,3 @@
-// models/InterestCategory.js
 const mongoose = require('mongoose');
 
 const InterestCategorySchema = new mongoose.Schema({
@@ -13,7 +12,6 @@ const InterestCategorySchema = new mongoose.Schema({
         default: '',
         trim: true
     }
-    // Można dodać: iconUrl, order (kolejność wyświetlania)
 }, { timestamps: true });
 
 module.exports = mongoose.model('InterestCategory', InterestCategorySchema);

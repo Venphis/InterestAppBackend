@@ -1,4 +1,3 @@
-// routes/adminAuthRoutes.js
 const express = require('express');
 const { body } = require('express-validator');
 const { loginAdmin, getAdminMe, changeAdminPassword, logoutAdmin } = require('../controllers/adminAuthController');

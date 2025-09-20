@@ -1,4 +1,3 @@
-// controllers/adminUsersController.js
 const User = require('../models/User');
 const AdminUser = require('../models/AdminUser');
 const Chat = require('../models/Chat');
@@ -14,10 +13,9 @@ const mongoose = require('mongoose');
 require('dotenv').config();
 const { validationResult } = require('express-validator');
 
-// Helper do generowania tokenu JWT dla zwykłego użytkownika (używany przy generowaniu tokenu testowego)
 const generateUserToken = (id) => {
     return jwt.sign({ id }, process.env.JWT_SECRET, {
-      expiresIn: '1h', // Testowy token może być krótkotrwały
+      expiresIn: '1h',
     });
 };
 
@@ -35,12 +33,11 @@ const getAllUsers = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    // Zmiana: domyślnie pokazuj tylko nieusuniętych, chyba że admin zażąda inaczej
-    const query = { isDeleted: false }; // DOMYŚLNIE isDeleted: false
-    if (req.query.showDeleted === 'true' && req.adminUser.role === 'superadmin') { // Tylko superadmin może widzieć usunięte
-        delete query.isDeleted; // Usuń filtr, aby pokazać wszystkie
+    const query = { isDeleted: false }; 
+    if (req.query.showDeleted === 'true' && req.adminUser.role === 'superadmin') { 
+        delete query.isDeleted;
     } else if (req.query.showDeleted === 'only' && req.adminUser.role === 'superadmin') {
-        query.isDeleted = true; // Pokaż tylko usunięte
+        query.isDeleted = true; 
     }
 
 
@@ -73,7 +70,6 @@ const getUserById = async (req, res) => {
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }
-        // TODO: Można dołączyć powiązane dane np. historię zgłoszeń, logowań itp.
         res.json(user);
     } catch (error) {
         console.error('Admin Get User By ID Error:', error);
@@ -110,7 +106,6 @@ const banUser = async (req, res) => {
         user.bannedAt = Date.now();
         await user.save({ validateBeforeSave: false });
 
-        // WYŚLIJ EMAIL O BANIE
         const emailMessage = `
             Witaj ${user.username},\n\n
             Z przykrością informujemy, że Twoje konto w ${process.env.APP_NAME} zostało zbanowane.\n
@@ -126,7 +121,6 @@ const banUser = async (req, res) => {
             });
         } catch (emailError) {
             console.error("Failed to send ban notification email:", emailError);
-            // Nie blokuj operacji bana z powodu błędu emaila, ale zaloguj
             await logAuditEvent('ban_notification_email_failed', {type: 'system'}, 'error', {type: 'user', id: user._id}, {error: emailError.message, banReason});
         }
 
@@ -169,7 +163,6 @@ const unbanUser = async (req, res) => {
         user.bannedAt = null;
         await user.save({ validateBeforeSave: false });
 
-         // WYŚLIJ EMAIL O ODBANOWANIU
         const emailMessage = `
             Witaj ${user.username},\n\n
             Informujemy, że Twoje konto w ${process.env.APP_NAME} zostało odbanowane.\n
@@ -251,12 +244,11 @@ const createTestUser = async (req, res) => {
         const testUser = await User.create({
             username,
             email,
-            password, // Zostanie zahashowane przez hook
+            password,
             isTestAccount: true,
-            isEmailVerified: true, // Konta testowe mogą być od razu zweryfikowane
+            isEmailVerified: true, 
         });
 
-        // Nie zwracamy hasła
         const userResponse = await User.findById(testUser._id).select('-password');
 
         res.status(201).json({ message: 'Test user created successfully', user: userResponse });
@@ -322,15 +314,7 @@ const deleteUser = async (req, res) => {
 
         user.isDeleted = true;
         user.deletedAt = Date.now();
-        // Co z danymi użytkownika? Na razie ich nie usuwamy fizycznie.
-        // Można rozważyć anonimizację niektórych pól np. email, nazwa, bio, jeśli jest taka potrzeba od razu.
-        // user.email = `deleted_${user._id}@example.com`;
-        // user.username = `deleted_user_${user._id}`;
-        // user.profile.displayName = "Deleted User";
-        // user.profile.avatarUrl = "default_deleted_avatar.png";
-        // etc.
-        // ORAZ: Unieważnienie aktywnych sesji/tokenów JWT
-        await user.save({ validateBeforeSave: false }); // Zapisz zmiany
+        await user.save({ validateBeforeSave: false });
 
         await logAuditEvent(
             'admin_soft_deleted_user',
@@ -377,8 +361,6 @@ const restoreUser = async (req, res) => {
 
         user.isDeleted = false;
         user.deletedAt = null;
-        // Jeśli dane były anonimizowane, tutaj jest problem - nie da się ich łatwo przywrócić.
-        // Dlatego przy soft delete lepiej nie modyfikować od razu danych osobowych.
         await user.save({ validateBeforeSave: false });
 
         await logAuditEvent(
@@ -416,21 +398,10 @@ const changeUserRole = async (req, res, next) => {
     const { userId } = req.params;
     const { role } = req.body;
 
-    // Sprawdzamy, czy rola występuje w enumie ze schematu User
-    // (zakładając, że User.schema.path('role').enumValues jest dostępne i poprawne)
     const allowedRoles = User.schema.path('role').enumValues;
     if (!allowedRoles || !allowedRoles.includes(role)) {
         return res.status(400).json({ message: `Role "${role}" is not allowed or not defined in User schema. Allowed: ${allowedRoles ? allowedRoles.join(', ') : 'None'}` });
     }
-
-    // Teoretycznie middleware authorizeAdminRole('superadmin') już to załatwia,
-    // ale dodatkowe sprawdzenie nie zaszkodzi, jeśli logikę uprawnień trzymamy też w kontrolerze.
-    // if (req.adminUser && req.adminUser.role !== 'superadmin') {
-    //    return res.status(403).json({ message: 'Only superadmins can change user roles.' });
-    // }
-
-    // Admin nie może zmienić roli samemu sobie przez ten endpoint (jeśli by to dotyczyło AdminUser)
-    // Tutaj zmieniamy rolę zwykłego użytkownika, więc to sprawdzenie nie jest konieczne w tej formie.
 
     try {
         const user = await User.findById(userId);
@@ -444,24 +415,23 @@ const changeUserRole = async (req, res, next) => {
 
         const oldRole = user.role;
         user.role = role;
-        await user.save({ validateBeforeSave: false }); // Zapisz bez walidacji innych pól
+        await user.save({ validateBeforeSave: false }); 
 
         await logAuditEvent(
             'admin_changed_user_role',
-            { type: 'admin', id: req.adminUser._id }, // req.adminUser z protectAdmin
+            { type: 'admin', id: req.adminUser._id }, 
             'admin_action',
             { type: 'user', id: userId },
             { oldRole: oldRole, newRole: role, targetUsername: user.username },
             req
         );
 
-        // Zwracamy zaktualizowanego użytkownika (bez hasła itp.)
         const userResponse = await User.findById(userId).select('-password -emailVerificationToken -passwordResetToken');
         return res.status(200).json({ message: 'User role updated successfully', user: userResponse });
 
     } catch (err) {
         console.error('[adminUsersController.js] Admin Change User Role Error:', err);
-        next(err); // Przekaż do globalnego error handlera
+        next(err);
     }
 };
 

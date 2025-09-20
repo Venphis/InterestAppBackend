@@ -1,4 +1,3 @@
-// controllers/adminManagementController.js
 const AdminUser = require('../models/AdminUser');
 const { validationResult } = require('express-validator');
 
@@ -29,7 +28,6 @@ const createAdminAccount = async (req, res) => {
             return res.status(400).json({ message: 'Admin with this username already exists.' });
         }
 
-        // Hasło zostanie zahashowane przez hook pre-save
         const newAdmin = await AdminUser.create({
             username,
             password,
@@ -37,15 +35,14 @@ const createAdminAccount = async (req, res) => {
             isActive: isActive !== undefined ? isActive : true
         });
 
-        // Nie zwracaj hasła
         const adminResponse = await AdminUser.findById(newAdmin._id);
         res.status(201).json(adminResponse);
 
         await logAuditEvent(
             'superadmin_created_admin_account',
-            { type: 'admin', id: req.adminUser._id }, // Performing superadmin
+            { type: 'admin', id: req.adminUser._id }, 
             'admin_action',
-            { type: 'admin', id: newAdmin._id }, // Target admin
+            { type: 'admin', id: newAdmin._id },
             { newAdminUsername: newAdmin.username, newAdminRole: newAdmin.role }, req
         );
         res.status(201).json(adminResponse);
@@ -66,7 +63,6 @@ const getAllAdminAccounts = async (req, res) => {
         return res.status(400).json({ errors: errors.array() });
     }
     try {
-        // Wyklucz hasło
         const admins = await AdminUser.find().select('-password').sort('username');
         res.json(admins);
     } catch (error) {
@@ -106,7 +102,7 @@ const updateAdminAccount = async (req, res) => {
     }
     const { role, isActive } = req.body;
     const adminIdToUpdate = req.params.adminId;
-    const performingSuperadminId = req.adminUser._id; // Z protectAdmin
+    const performingSuperadminId = req.adminUser._id;
 
     if (adminIdToUpdate === performingSuperadminId.toString() && isActive === false) {
         return res.status(400).json({ message: 'Superadmin cannot deactivate their own account.' });
@@ -127,7 +123,6 @@ const updateAdminAccount = async (req, res) => {
             if (!allowedRoles.includes(role)) {
                 return res.status(400).json({ message: `Invalid role. Allowed: ${allowedRoles.join(', ')}` });
             }
-            // Zapobiegaj przypadkowemu usunięciu ostatniego superadmina przez zmianę roli
             if (admin.role === 'superadmin' && role !== 'superadmin') {
                 const superadminCount = await AdminUser.countDocuments({ role: 'superadmin', isActive: true });
                 if (superadminCount <= 1) {
@@ -137,7 +132,6 @@ const updateAdminAccount = async (req, res) => {
             admin.role = role;
         }
         if (isActive !== undefined) {
-             // Zapobiegaj deaktywacji ostatniego superadmina
              if (admin.role === 'superadmin' && isActive === false) {
                  const superadminCount = await AdminUser.countDocuments({ role: 'superadmin', isActive: true });
                  if (superadminCount <= 1 && admin.isActive) { // Jeśli to jest ten ostatni aktywny
@@ -157,7 +151,7 @@ const updateAdminAccount = async (req, res) => {
             'admin_action',
             { type: 'admin', id: adminResponse._id },
             {
-                updatedFields: req.body, // Co próbowano zmienić
+                updatedFields: req.body, 
                 previousRole: oldRole,
                 previousIsActive: oldIsActive,
                 targetAdminUsername: adminResponse.username
@@ -193,7 +187,6 @@ const deleteAdminAccount = async (req, res) => {
             return res.status(404).json({ message: 'Admin account to delete not found.' });
         }
 
-        // Zapobiegaj usunięciu ostatniego superadmina
         if (adminToDelete.role === 'superadmin') {
             const superadminCount = await AdminUser.countDocuments({ role: 'superadmin' });
             if (superadminCount <= 1) {
@@ -208,7 +201,7 @@ const deleteAdminAccount = async (req, res) => {
             'superadmin_deleted_admin_account',
             { type: 'admin', id: req.adminUser._id },
             'admin_action',
-            { type: 'admin', id: adminIdToDelete }, // targetId jest już usunięte, ale mamy ID
+            { type: 'admin', id: adminIdToDelete },
             { deletedAdminUsername: adminToDelete.username }, req
         );
         res.json({ message: `Admin account ${adminToDelete.username} deleted successfully.` });

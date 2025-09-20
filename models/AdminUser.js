@@ -1,9 +1,8 @@
-// models/AdminUser.js
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 
 const AdminUserSchema = new mongoose.Schema({
-  username: { // Nazwa użytkownika admina, unikalna
+  username: {
     type: String,
     required: [true, 'Admin username is required'],
     unique: true,
@@ -12,22 +11,20 @@ const AdminUserSchema = new mongoose.Schema({
   password: {
     type: String,
     required: [true, 'Admin password is required'],
-    minlength: 8, // Można ustawić mocniejsze wymagania dla adminów
-    select: false, // Domyślnie nie zwracaj hasła w zapytaniach
+    minlength: 8,
+    select: false,
   },
   role: {
     type: String,
-    enum: ['superadmin', 'admin', 'moderator'], // Role specyficzne dla panelu
-    default: 'admin', // Domyślna rola przy tworzeniu (można zmienić)
+    enum: ['superadmin', 'admin', 'moderator'], 
+    default: 'admin', 
   },
-  isActive: { // Czy konto admina jest aktywne
+  isActive: { 
     type: Boolean,
     default: true,
   },
-  // Można dodać: lastLoginAt, createdBy (ID innego admina) itp.
 }, { timestamps: true });
 
-// Hashowanie hasła PRZED zapisem admina
 AdminUserSchema.pre('save', async function(next) {
   if (!this.isModified('password')) {
     return next();
@@ -41,7 +38,6 @@ AdminUserSchema.pre('save', async function(next) {
   }
 });
 
-// Metoda do porównywania hasła (używana przy logowaniu admina)
 AdminUserSchema.methods.comparePassword = async function(candidatePassword) {
   const adminWithPassword = await mongoose.model('AdminUser').findById(this._id).select('+password');
   if (!adminWithPassword) return false;

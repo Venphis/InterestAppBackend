@@ -1,4 +1,3 @@
-// routes/userRoutes.js
 const express = require('express');
 const multer = require('multer');
 const { body, param, query } = require('express-validator');

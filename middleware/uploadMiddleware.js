@@ -1,4 +1,3 @@
-// middleware/uploadMiddleware.js
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -18,7 +17,6 @@ const avatarStorage = multer.diskStorage({
     },
     filename: function (req, file, cb) {
         if (!req.user || !req.user._id) {
-            // To nie powinno się zdarzyć, bo `protect` middleware jest przed `uploadAvatar`
             return cb(new Error('User not authenticated for upload'));
         }
         const uniqueSuffix = req.user._id + '-' + Date.now() + path.extname(file.originalname);
@@ -30,12 +28,8 @@ const avatarFileFilter = (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
         cb(null, true);
     } else {
-        // Zamiast cb(new Error(...)), co jest traktowane jako błąd serwera,
-        // lepiej przekazać błąd walidacji, który można obsłużyć.
-        // Jednak standardowe `cb(new Error(...), false)` jest powszechne.
-        // Kluczowa jest obsługa tego błędu w trasie.
         const error = new Error('Not an image! Please upload only images.');
-        error.code = 'INVALID_FILE_TYPE'; // Dajmy mu kod, żeby łatwiej go rozpoznać
+        error.code = 'INVALID_FILE_TYPE';
         cb(error, false);
     }
 };
@@ -43,7 +37,7 @@ const avatarFileFilter = (req, file, cb) => {
 const uploadAvatar = multer({
     storage: avatarStorage,
     limits: {
-        fileSize: 1024 * 1024 * 5 // --- ZMIANA LIMITU NA 10MB ---
+        fileSize: 1024 * 1024 * 5 
     },
     fileFilter: avatarFileFilter
 });

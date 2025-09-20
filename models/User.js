@@ -1,4 +1,3 @@
-// models/User.js
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 
@@ -40,7 +39,7 @@ const UserSchema = new mongoose.Schema({
     bio: { type: String, default: '' },
     broadcastMessage: { type: String, default: '' }
   },
-  role: { // Rola zwykłego użytkownika (np. 'user', 'premium_user')
+  role: { 
     type: String,
     enum: ['user', 'premium_user'],
     default: 'user'
@@ -48,7 +47,7 @@ const UserSchema = new mongoose.Schema({
   isBanned: { type: Boolean, default: false },
   banReason: { type: String, default: null },
   bannedAt: { type: Date, default: null },
-  isTestAccount: { type: Boolean, default: false }, // Czy to konto testowe
+  isTestAccount: { type: Boolean, default: false }, 
   isEmailVerified: { type: Boolean, default: false },
   emailVerificationToken: { type: String, select: false },
   emailVerificationTokenExpires: { type: Date, select: false },
@@ -57,7 +56,7 @@ const UserSchema = new mongoose.Schema({
   isDeleted: {
     type: Boolean,
     default: false,
-    index: true // Indeks na tym polu może przyspieszyć zapytania filtrujące
+    index: true 
   },
   deletedAt: {
     type: Date,

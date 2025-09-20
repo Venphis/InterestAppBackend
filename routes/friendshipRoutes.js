@@ -1,6 +1,5 @@
-// routes/friendshipRoutes.js
 const express = require('express');
-const { body, param, query } = require('express-validator'); // Dodano query
+const { body, param, query } = require('express-validator'); 
 const { protect } = require('../middleware/authMiddleware');
 const {
     sendFriendRequest,
@@ -14,7 +13,7 @@ const {
 } = require('../controllers/friendshipController');
 const router = express.Router();
 
-router.use(protect); // Wszystkie trasy chronione
+router.use(protect); 
 
 const friendshipIdValidation = [param('friendshipId').isMongoId().withMessage('Invalid Friendship ID format')];
 const allowedFriendshipTypes = ['friend', 'close_friend', 'acquaintance', 'family', 'work_colleague', 'romantic_partner', 'other'];
@@ -27,8 +26,6 @@ router.get('/', [
 
 router.post('/request', [
     body('recipientId').isMongoId().withMessage('Invalid recipient ID'),
-    // Usunięto walidator dla friendshipType, bo jest ustawiany automatycznie
-    // Można dodać custom validator, aby upewnić się, że nie jest przesyłany w body:
     body('friendshipType').custom(value => {
         if (value !== undefined) {
           throw new Error('friendshipType cannot be set manually during request creation.');

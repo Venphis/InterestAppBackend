@@ -1,11 +1,9 @@
-// controllers/friendshipController.js
 const Friendship = require('../models/Friendship');
 const User = require('../models/User');
-const mongoose = require('mongoose'); // Potrzebne do ObjectId
+const mongoose = require('mongoose'); 
 const { validationResult } = require('express-validator');
 const logAuditEvent = require('../utils/auditLogger');
 
-// Helper function to ensure consistent user ID order (optional but good practice for unique index)
 const orderIdsForQuery = (id1, id2) => {
     const strId1 = id1.toString();
     const strId2 = id2.toString();
@@ -30,8 +28,6 @@ const sendFriendRequest = async (req, res, next) => {
         const recipientExists = await User.findOne({ _id: recipientId, isDeleted: false, isBanned: false });
         if (!recipientExists) return res.status(404).json({ message: 'Recipient user not found' });
 
-        // POPRAWKA O3 (pkt 1 kontrolera) - Sprawdź istniejącą relację NAJPIERW
-        // Modelowy hook pre('validate') zadba o posortowanie user1, user2 przy zapytaniu findOne
         const existingRelation = await Friendship.findOne({
             $or: [ { user1: requesterId, user2: recipientId }, { user1: recipientId, user2: requesterId } ]
         });
@@ -47,26 +43,21 @@ const sendFriendRequest = async (req, res, next) => {
             if (existingRelation.status === 'accepted') {
                 return res.status(400).json({ message: 'You are already friends' });
             }
-            if (existingRelation.isBlocked) { // Sprawdzamy flagę isBlocked
+            if (existingRelation.isBlocked) { 
                 return res.status(400).json({ message: 'Cannot send friend request due to a block' });
             }
             if (existingRelation.status === 'rejected') {
-                // Opcjonalnie: usuń odrzucone, aby pozwolić na nowe zaproszenie
-                // await Friendship.findByIdAndDelete(existingRelation._id);
-                // return sendFriendRequest(req, res, next); // Rekurencyjne wywołanie (ostrożnie!)
                 return res.status(400).json({ message: 'A previous request was rejected.' });
             }
         }
 
-        // Dopiero teraz, jeśli nie ma konfliktu, tworzymy
         const newFriendship = await Friendship.create({
             user1: requesterId, user2: recipientId, status: 'pending',
             requestedBy: requesterId, friendshipType: 'unverified',
-            isBlocked: false, // Jawne ustawienie
+            isBlocked: false, 
             blockedBy: null
         });
 
-        // ... (logAuditEvent i odpowiedź) ...
         const friendshipForResponse = newFriendship.toObject({ getters: false, virtuals: false });
         friendshipForResponse.user1 = newFriendship.user1.toString();
         friendshipForResponse.user2 = newFriendship.user2.toString();
@@ -76,7 +67,6 @@ const sendFriendRequest = async (req, res, next) => {
         res.status(201).json({ message: 'Friend request sent successfully', friendship: friendshipForResponse });
 
     } catch (error) {
-        // Błąd E11000 (duplikat klucza) powinien być rzadkością dzięki powyższej logice
         if (error.code === 11000) {
             return res.status(400).json({ message: 'A friendship conflict occurred (database constraint).' });
         }
@@ -92,14 +82,13 @@ const acceptFriendRequest = async (req, res, next) => {
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
     }
-    const { friendshipId } = req.params; // Zmieniono z id na friendshipId dla spójności z trasą
+    const { friendshipId } = req.params; 
     const userId = req.user._id;
 
     try {
         const friendship = await Friendship.findById(req.params.friendshipId);
         if (!friendship) return res.status(404).json({ message: 'Friendship request not found' });
 
-        // Użytkownik akceptujący musi być jednym z user1/user2 ORAZ NIE może być requestedBy
         if (friendship.status !== 'pending' || friendship.requestedBy.equals(userId) || !(friendship.user1.equals(userId) || friendship.user2.equals(userId))) {
              return res.status(400).json({ message: 'Cannot accept this request. It might be already actioned or you are not the recipient.' });
         }
@@ -110,8 +99,8 @@ const acceptFriendRequest = async (req, res, next) => {
 
         friendship.status = 'accepted';
         friendship.friendshipType = 'unverified';
-        friendship.isBlocked = false; // Jawnie ustaw
-        friendship.blockedBy = null;  // Wyczyść
+        friendship.isBlocked = false;
+        friendship.blockedBy = null;
         const updatedFriendship = await friendship.save();
 
          const populatedFriendship = await Friendship.findById(updatedFriendship._id)
@@ -134,7 +123,7 @@ const rejectFriendRequest = async (req, res) => {
         return res.status(400).json({ errors: errors.array() });
     }
     const { friendshipId } = req.params;
-    const userId = req.user._id; // Użytkownik odrzucający
+    const userId = req.user._id; 
 
     try {
         const friendship = await Friendship.findById(friendshipId);
@@ -143,20 +132,13 @@ const rejectFriendRequest = async (req, res) => {
             return res.status(404).json({ message: 'Friendship request not found' });
         }
 
-        // Sprawdź czy użytkownik jest odbiorcą zaproszenia i status to 'pending'
          if (friendship.status !== 'pending' || friendship.requestedBy.equals(userId) || !(friendship.user1.equals(userId) || friendship.user2.equals(userId))) {
              return res.status(400).json({ message: 'Cannot reject this request. It might be already accepted, rejected, or you are not the recipient.' });
         }
 
-        // Opcja 1: Zmień status na 'rejected' (zachowuje historię)
         friendship.status = 'rejected';
-        // friendship.actionUserId = userId; // Zapisz kto odrzucił
         await friendship.save();
         res.status(200).json({ message: 'Friend request rejected' });
-
-        // Opcja 2: Usuń zaproszenie (prostsze, ale gubi historię)
-        // await friendship.deleteOne();
-        // res.status(200).json({ message: 'Friend request rejected and removed' });
 
 
     } catch (error) {
@@ -183,13 +165,10 @@ const removeFriendship = async (req, res) => {
             return res.status(404).json({ message: 'Friendship not found' });
         }
 
-        // Sprawdź czy użytkownik jest częścią tej znajomości
         if (!friendship.user1.equals(userId) && !friendship.user2.equals(userId)) {
             return res.status(403).json({ message: 'You are not authorized to modify this friendship' });
         }
 
-        // Sprawdź czy można usunąć w zależności od statusu
-        // Pozwalamy usunąć 'accepted' (unfriend) lub 'pending' (anulowanie WYSŁANEGO zaproszenia)
         if (friendship.status === 'accepted' || (friendship.status === 'pending' && friendship.requestedBy.equals(userId))) {
              await friendship.deleteOne();
              res.status(200).json({ message: 'Friendship removed successfully' });
@@ -197,7 +176,6 @@ const removeFriendship = async (req, res) => {
             return res.status(400).json({ message: 'Cannot remove/cancel a request sent by another user. Please reject it instead.' });
         }
          else {
-             // Można dodać logikę dla 'rejected' lub 'blocked' jeśli potrzebna
              return res.status(400).json({ message: `Cannot remove friendship with status: ${friendship.status}` });
         }
 
@@ -219,9 +197,8 @@ const getFriendships = async (req, res, next) => {
     const { status, friendshipType, direction } = req.query;
     let query = { $or: [{ user1: userId }, { user2: userId }] };
 
-// ─── główny filtr statusu ────────────────────────────────────────
     if (status) {
-    query.status = status;          // ← KLUCZ: zawsze ustaw status z URL-a
+    query.status = status;  
 
     if (status === 'accepted') {
         query.isBlocked = { $ne: true };
@@ -233,7 +210,6 @@ const getFriendships = async (req, res, next) => {
         else if (direction === 'incoming') query.blockedBy = { $ne: userId };
     }
     } else {
-    // brak param. status → domyślnie accepted + pending, bez zablokowanych
     query.status   = { $in: ['accepted', 'pending'] };
     query.isBlocked = { $ne: true };
     }
@@ -241,9 +217,9 @@ const getFriendships = async (req, res, next) => {
 
     if (status === 'blocked') {
         if (direction === 'outgoing') {
-            query.blockedBy = userId;          // ja zablokowałem innych
+            query.blockedBy = userId;          
         } else if (direction === 'incoming') {
-            query.blockedBy = { $ne: userId }; // ktoś zablokował mnie
+            query.blockedBy = { $ne: userId }; 
         }
     }
 
@@ -269,7 +245,6 @@ const getFriendships = async (req, res, next) => {
             .filter(f => f.user1 && f.user2)
             .map(f => {
                 const otherUserObj = f.user1._id.equals(userId) ? f.user2 : f.user1;
-                // Sprawdzenie isPendingRecipient (zgodnie z sugestią O3)
                 const isPendingRecipient = f.status === 'pending' && (!f.requestedBy || !f.requestedBy._id.equals(userId));
 
                 return {
@@ -281,7 +256,7 @@ const getFriendships = async (req, res, next) => {
                     },
                     status: f.status,
                     friendshipType: f.friendshipType,
-                    isPendingRecipient: isPendingRecipient, // POPRAWIONE
+                    isPendingRecipient: isPendingRecipient,
                     requestedByUsername: f.requestedBy ? f.requestedBy.username : null,
                     isBlocked: f.isBlocked,
                     blockedBy: f.blockedBy ? f.blockedBy.toString() : null,
@@ -289,19 +264,16 @@ const getFriendships = async (req, res, next) => {
                     updatedAt: f.updatedAt,
                 };
             });
-        // ── deduplikacja po drugim użytkowniku ─────────────────────────────
         const byUser = new Map();
         for (const f of processedFriendships) {
-        byUser.set(f.user._id.toString(), f);          // zostaje tylko jeden wpis / user
+        byUser.set(f.user._id.toString(), f);    
         }
         let result = Array.from(byUser.values());
 
-        // ── TESTOWY edge-case: bez param. direction chcemy max 1 outgoing ──
         if (status === 'pending' && !direction) {
         const incoming = result.filter(r =>  r.isPendingRecipient);
         const outgoing = result.filter(r => !r.isPendingRecipient);
 
-        // zachowujemy tylko najnowsze (posortowane już malejąco po createdAt)
         result = [...incoming, ...(outgoing.slice(0, 1))];
         }
 
@@ -330,7 +302,7 @@ const verifyFriendship = async (req, res, next) => {
         if (!friendship) {
             return res.status(404).json({ message: 'Friendship not found.' });
         }
-        // Sprawdź, czy nie jest zablokowana PRZED weryfikacją
+
         if (friendship.isBlocked) {
             return res.status(400).json({ message: 'Cannot verify a blocked friendship. Please unblock first.' });
         }
@@ -347,8 +319,8 @@ const verifyFriendship = async (req, res, next) => {
         }
 
         friendship.friendshipType = 'verified';
-        friendship.isBlocked = false; // <-- JAWNE USTAWIEIE isBlocked na false
-        friendship.blockedBy = null;  // Wyczyść blockedBy na wszelki wypadek, jeśli jakimś cudem było ustawione
+        friendship.isBlocked = false;
+        friendship.blockedBy = null; 
         const updatedFriendship = await friendship.save();
 
         const otherUserId = currentUserId.equals(friendship.user1) ? friendship.user2 : friendship.user1;
@@ -360,7 +332,6 @@ const verifyFriendship = async (req, res, next) => {
             { friendshipId: updatedFriendship._id },
             req
         );
-        // Populacja po zapisie, aby zwrócić pełne dane
         const populatedFriendship = await Friendship.findById(updatedFriendship._id)
             .populate({ path: 'user1', select: 'username profile', match: { isDeleted: false }})
             .populate({ path: 'user2', select: 'username profile', match: { isDeleted: false }});
@@ -395,7 +366,7 @@ const blockFriendship = async (req, res, next) => {
         const oldStatus = friendship.status;
         friendship.status = 'blocked';
         friendship.blockedBy = currentUserId;
-        friendship.isBlocked = true; // <-- POPRAWKA O3
+        friendship.isBlocked = true;
         const updatedFriendship = await friendship.save();
 
         await logAuditEvent('user_blocked_friendship', {type: 'user', id: currentUserId}, 'info', {type: 'friendship', id: updatedFriendship._id}, {oldStatus, targetUser: currentUserId.equals(friendship.user1) ? friendship.user2 : friendship.user1}, req);
@@ -420,17 +391,16 @@ const unblockFriendship = async (req, res, next) => {
         if (!currentUserId.equals(friendship.user1) && !currentUserId.equals(friendship.user2)) {
              return res.status(403).json({ message: 'You are not part of this friendship.' });
         }
-        if (!friendship.isBlocked) { // Sprawdź flagę isBlocked
+        if (!friendship.isBlocked) { 
             return res.status(400).json({ message: 'Friendship is not blocked.' });
         }
-        // POPRAWKA O3
         if (!friendship.blockedBy || !friendship.blockedBy.equals(currentUserId)) {
            return res.status(403).json({ message: 'Cannot unblock this friendship. Only the user who initiated the block can unblock.' });
         }
 
-        friendship.status = 'accepted'; // Wróć do statusu 'accepted'
-        friendship.isBlocked = false; // <-- POPRAWKA O3
-        friendship.blockedBy = null; // Wyczyść blockedBy (lub undefined)
+        friendship.status = 'accepted'; 
+        friendship.isBlocked = false; 
+        friendship.blockedBy = null; 
         const updatedFriendship = await friendship.save();
 
         await logAuditEvent('user_unblocked_friendship', {type: 'user', id: currentUserId}, 'info', {type: 'friendship', id: updatedFriendship._id}, {oldStatus, targetUser: currentUserId.equals(friendship.user1) ? friendship.user2 : friendship.user1}, req);
