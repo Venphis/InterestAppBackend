@@ -1,10 +1,11 @@
 const User = require('../models/User');
 const UserInterest = require('../models/UserInterest');
 const Interest = require('../models/Interest'); 
-const logAuditEvent = require('../utils/auditLogger');
-const fs = require('fs');
+const logAuditEvent = require('../utils/auditLogger'); // Dodaj, jeśli potrzebne
+const fs = require('fs'); // Do usuwania starych avatarów
 const path = require('path');
 const { validationResult } = require('express-validator');
+const mongoose = require('mongoose'); // Required for ObjectId checks
 
 // @desc    Get current user profile (optionally populated)
 // @route   GET /api/users/profile
@@ -76,28 +77,44 @@ const updateUserProfile = async (req, res) => {
     }
 };
 
-// @desc    Find users by username or display name
+// @desc    Find users by username, display name, or ID
 // @route   GET /api/users/search?q=...
 // @access  Private
-const findUsers = async (req, res, next) => { 
+const findUsers = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
     }
+
     const queryParam = req.query.q;
 
-    const keywordConditions = [
-        { username: { $regex: queryParam, $options: 'i' } },
-        { 'profile.displayName': { $regex: queryParam, $options: 'i' } }
-    ];
+    const isObjectId = mongoose.Types.ObjectId.isValid(queryParam);
 
     try {
-        const users = await User.find({
-            $or: keywordConditions,
-            _id: { $ne: req.user._id }, 
-            isDeleted: false,          
-            isBanned: false            
-        }).select('username email profile');
+        let users;
+
+        if (isObjectId) {
+            users = await User.findOne({
+                _id: queryParam,
+                _id: { $ne: req.user._id }, // exclude self
+                isDeleted: false,
+                isBanned: false
+            }).select('username email profile');
+
+            users = users ? [users] : [];
+        } else {
+            const keywordConditions = [
+                { username: { $regex: queryParam, $options: 'i' } },
+                { 'profile.displayName': { $regex: queryParam, $options: 'i' } }
+            ];
+
+            users = await User.find({
+                $or: keywordConditions,
+                _id: { $ne: req.user._id },
+                isDeleted: false,
+                isBanned: false
+            }).select('username email profile');
+        }
 
         res.json(users);
     } catch (error) {
@@ -105,6 +122,45 @@ const findUsers = async (req, res, next) => {
         next(error); 
     }
 };
+
+
+// @desc    fetch a single user by id
+// @route   GET /api/users/:id
+// @access  Private
+const getUserById = async (req, res, next) => {
+  const userId = req.params.id;
+
+  try {
+    // Find the requested user (not req.user)
+    const user = await User.findOne({
+      _id: userId,
+      isDeleted: false,
+      isBanned: false
+    }).select('username email profile');
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Find interests for this user
+    const userInterests = await UserInterest.find({ userId: userId })
+      .populate('interestId', 'name category');
+
+    // Build response
+    res.json({
+      ...user.toObject(), // convert the found user to plain object
+      interests: userInterests.map(ui => ({
+        userInterestId: ui._id,
+        interest: ui.interestId,
+        customDescription: ui.customDescription
+      }))
+    });
+  } catch (error) {
+    console.error('[userController.js] Get User by ID Error:', error);
+    next(error);
+  }
+};
+
 
 
 // --- Kontrolery Zainteresowań Użytkownika ---
@@ -290,8 +346,9 @@ module.exports = {
     getUserProfile,
     updateUserProfile,
     findUsers,
-    addUserInterest,
-    updateUserInterest,
+    addUserInterest, 
+    updateUserInterest, 
     removeUserInterest, 
     updateUserAvatar,
+    getUserById
 };

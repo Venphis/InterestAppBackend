@@ -5,7 +5,7 @@ const { protect } = require('../middleware/authMiddleware');
 const { uploadAvatar } = require('../middleware/uploadMiddleware');
 const {
     getUserProfile, updateUserProfile, updateUserAvatar, findUsers,
-    addUserInterest, updateUserInterest, removeUserInterest
+    addUserInterest, updateUserInterest, removeUserInterest, getUserById
 } = require('../controllers/userController');
 const router = express.Router();
 
@@ -21,6 +21,8 @@ router.route('/profile')
         body('profile.bio').optional({ checkFalsy: true }).trim().isLength({ max: 500 }).escape(),
         body('profile.broadcastMessage').optional({ checkFalsy: true }).trim().isLength({ max: 280 }).escape()
     ], updateUserProfile);
+
+router.get('/:id', getUserById)
 
 router.put('/profile/avatar', (req, res, next) => {
     uploadAvatar.single('avatarImage')(req, res, (err) => {
