@@ -176,7 +176,7 @@ describe('Admin Users API', () => {
 
             const res = await request(app)
                 .put(`/api/admin/users/${userToModify._id}/role`)
-                .set('Authorization', `Bearer ${superadminToken}`) // Zakładamy, że tylko superadmin może
+                .set('Authorization', `Bearer ${superadminToken}`)
                 .send({ role: newRole });
 
             expect(res.statusCode).toEqual(200);
