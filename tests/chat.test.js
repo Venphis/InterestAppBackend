@@ -148,3 +148,63 @@ describe('Chat API (/api/chats)', () => {
         });
     });
 });
+
+describe('Chat API with Soft Deleted Users', () => {
+    let activeUser, deletedUser, activeUserToken;
+
+    beforeEach(async () => {
+    await User.deleteMany({ email: /softdelete_chat@/ });
+    activeUser = await createVerifiedUser({ username: 'activeChat_sd', email: 'softdelete_chat@active.com' });
+    // Stwarzasz usuniętego usera, to jest OK
+    deletedUser = await createVerifiedUser({ username: 'deletedChat_sd', email: 'softdelete_chat@deleted.com', isDeleted: true, deletedAt: new Date() });
+    activeUserToken = generateUserToken(activeUser);
+    });
+
+    it('should not allow creating a new chat with a soft-deleted user', async () => {
+        const res = await request(app)
+            .post('/api/chats')
+            .set('Authorization', `Bearer ${activeUserToken}`)
+            .send({ userId: deletedUser._id.toString() });
+
+        expect(res.statusCode).toEqual(404); // Oczekujemy 404, bo `accessChat` nie znajdzie aktywnego usera
+        expect(res.body.message).toContain('Recipient user not found');
+    });
+
+    it('should filter out soft-deleted participants when fetching chats', async () => {
+        // Stwórz czat, a następnie usuń jednego z uczestników
+        let participantToDeletle = await createVerifiedUser({ username: 'soon_deleted', email: 'soon_deleted@chat.com' });
+        const chat = await createChat([activeUser, participantToDeletle]);
+        await User.findByIdAndUpdate(participantToDeletle._id, { isDeleted: true, deletedAt: new Date() });
+
+        const res = await request(app)
+            .get('/api/chats')
+            .set('Authorization', `Bearer ${activeUserToken}`);
+
+        expect(res.statusCode).toEqual(200);
+        // Oczekujemy, że `fetchChats` odfiltruje ten czat, bo ma mniej niż 2 aktywnych uczestników
+        // (zgodnie z logiką, którą dodaliśmy wcześniej: `const validChats = chats.filter(...)`)
+        expect(res.body.length).toBe(0);
+    });
+
+    it('should return null for sender if message sender was soft-deleted', async () => {
+        // Stwórz czat i wiadomość
+        const chat = await createChat([activeUser, deletedUser]);
+        await createMessage({ chatId: chat, senderId: deletedUser, content: 'Message from a deleted user' });
+
+        // Pobierz wiadomości
+        const res = await request(app)
+            .get(`/api/messages/${chat._id}`)
+            .set('Authorization', `Bearer ${activeUserToken}`);
+
+        // POPRAWKA ASERCJI:
+        expect(res.statusCode).toEqual(200);
+        expect(res.body).toBeInstanceOf(Object); // Oczekujemy obiektu
+        expect(res.body).toHaveProperty('messages'); // Który ma pole 'messages'
+        expect(res.body.messages).toBeInstanceOf(Array); // Pole 'messages' jest tablicą
+        expect(res.body.messages.length).toBe(1); // Oczekujemy jednej wiadomości
+
+        // Oczekujemy, że pole senderId w obiekcie wiadomości będzie `null`
+        expect(res.body.messages[0].senderId).toBeNull();
+        expect(res.body.messages[0].content).toBe('Message from a deleted user');
+    });
+});

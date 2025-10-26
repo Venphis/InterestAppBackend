@@ -1,3 +1,4 @@
+// routes/userRoutes.js
 const express = require('express');
 const multer = require('multer');
 const { body, param, query } = require('express-validator');
@@ -5,12 +6,15 @@ const { protect } = require('../middleware/authMiddleware');
 const { uploadAvatar } = require('../middleware/uploadMiddleware');
 const {
     getUserProfile, updateUserProfile, updateUserAvatar, findUsers,
-    addUserInterest, updateUserInterest, removeUserInterest
+    addUserInterest, updateUserInterest, removeUserInterest, getUserById
 } = require('../controllers/userController');
 const router = express.Router();
 
-router.use(protect);
+router.use(protect); // Zastosuj middleware `protect` do wszystkich tras poniżej
 
+// --- TRASY ZE STAŁYMI SEGMENTAMI (PRZED DYNAMICZNYMI) ---
+
+// Trasa dla profilu zalogowanego użytkownika
 router.route('/profile')
     .get(getUserProfile)
     .put([
@@ -22,6 +26,7 @@ router.route('/profile')
         body('profile.broadcastMessage').optional({ checkFalsy: true }).trim().isLength({ max: 280 }).escape()
     ], updateUserProfile);
 
+// Trasy dla avatara i zainteresowań (zagnieżdżone pod /profile)
 router.put('/profile/avatar', (req, res, next) => {
     uploadAvatar.single('avatarImage')(req, res, (err) => {
         if (err) {
@@ -55,8 +60,19 @@ router.put('/profile/interests/:userInterestId', [
 
 router.delete('/profile/interests/:userInterestId', userInterestIdValidation, removeUserInterest);
 
+
+// Trasa do wyszukiwania użytkowników (stały segment 'search')
 router.get('/search', [
     query('q').notEmpty().withMessage('Search query "q" is required').isString().trim().isLength({min: 1, max: 50}).escape()
 ], findUsers);
+
+
+// --- TRASA Z DYNAMICZNYM PARAMETREM (NA KOŃCU) ---
+
+// Trasa do pobierania profilu DOWOLNEGO użytkownika po ID
+router.get('/:id', [
+    param('id').isMongoId().withMessage('Invalid User ID format') // Dodaj walidację
+], getUserById);
+
 
 module.exports = router;

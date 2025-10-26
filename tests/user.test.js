@@ -318,3 +318,65 @@ describe('User API - Avatar Upload', () => {
         expect(fs.existsSync(oldAvatarFullPath)).toBe(false);
     });
 });
+
+describe('User API - Get User by ID', () => {
+    let userA, userB;
+    let tokenA;
+
+    beforeAll(async () => {
+        // Wyczyść kolekcję na początku tego bloku testów
+        await mongoose.connection.collection('users').deleteMany({
+            email: { $in: ['userA_by_id@example.com', 'userB_by_id@example.com'] }
+        });
+        userA = await createVerifiedUser({ username: 'userA_by_id', email: 'userA_by_id@example.com' });
+        userB = await createVerifiedUser({ username: 'userB_by_id', email: 'userB_by_id@example.com' });
+        tokenA = generateUserToken(userA);
+    });
+
+    it('should allow a logged-in user to fetch another user profile by their ID', async () => {
+        const res = await request(app)
+            .get(`/api/users/${userB._id}`)
+            .set('Authorization', `Bearer ${tokenA}`);
+
+        expect(res.statusCode).toEqual(200);
+        expect(res.body).toHaveProperty('_id', userB._id.toString());
+        expect(res.body).toHaveProperty('username', userB.username);
+        expect(res.body).not.toHaveProperty('password'); // Upewnij się, że wrażliwe dane nie są zwracane
+        expect(res.body).toHaveProperty('interests'); // Sprawdź, czy pole interests istnieje (nawet jeśli puste)
+    });
+
+    it('should allow a logged-in user to fetch their own profile by their ID', async () => {
+        const res = await request(app)
+            .get(`/api/users/${userA._id}`)
+            .set('Authorization', `Bearer ${tokenA}`);
+
+        expect(res.statusCode).toEqual(200);
+        expect(res.body._id).toBe(userA._id.toString());
+    });
+
+    it('should return 404 if the user with the given ID does not exist', async () => {
+        const nonExistentId = new mongoose.Types.ObjectId().toString();
+        const res = await request(app)
+            .get(`/api/users/${nonExistentId}`)
+            .set('Authorization', `Bearer ${tokenA}`);
+        expect(res.statusCode).toEqual(404);
+        expect(res.body.message).toBe('User not found');
+    });
+
+    it('should return a validation error for an invalid ID format', async () => {
+        const res = await request(app)
+            .get(`/api/users/this-is-not-a-valid-id`)
+            .set('Authorization', `Bearer ${tokenA}`);
+        expect(res.statusCode).toEqual(400);
+        expect(res.body).toHaveProperty('errors');
+        expect(res.body.errors[0].msg).toBe('Invalid User ID format');
+    });
+
+    it('should not return a profile of a soft-deleted user', async () => {
+        const deletedUser = await createUser({ username: 'deleted_for_getbyid', email: 'deleted_getbyid@example.com', isDeleted: true });
+        const res = await request(app)
+            .get(`/api/users/${deletedUser._id}`)
+            .set('Authorization', `Bearer ${tokenA}`);
+        expect(res.statusCode).toEqual(404); // Kontroler powinien traktować go jako nieistniejącego
+    });
+});
