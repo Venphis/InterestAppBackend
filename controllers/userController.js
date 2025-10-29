@@ -6,7 +6,6 @@ const fs = require('fs');
 const path = require('path');
 const { validationResult } = require('express-validator');
 const mongoose = require('mongoose');
-const mongoose = require('mongoose');
 
 // @desc    Get current user profile (optionally populated)
 // @route   GET /api/users/profile
@@ -79,16 +78,13 @@ const updateUserProfile = async (req, res) => {
 };
 
 // @desc    Find users by username, display name, or ID
-// @desc    Find users by username, display name, or ID
 // @route   GET /api/users/search?q=...
 // @access  Private
-const findUsers = async (req, res, next) => {
 const findUsers = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
     }
-
 
     const queryParam = req.query.q;
 
@@ -111,33 +107,7 @@ const findUsers = async (req, res, next) => {
                 { username: { $regex: queryParam, $options: 'i' } },
                 { 'profile.displayName': { $regex: queryParam, $options: 'i' } }
             ];
-    const isObjectId = mongoose.Types.ObjectId.isValid(queryParam);
 
-    try {
-        let users;
-
-        if (isObjectId) {
-            users = await User.findOne({
-                _id: queryParam,
-                _id: { $ne: req.user._id }, // exclude self
-                isDeleted: false,
-                isBanned: false
-            }).select('username email profile');
-
-            users = users ? [users] : [];
-        } else {
-            const keywordConditions = [
-                { username: { $regex: queryParam, $options: 'i' } },
-                { 'profile.displayName': { $regex: queryParam, $options: 'i' } }
-            ];
-
-            users = await User.find({
-                $or: keywordConditions,
-                _id: { $ne: req.user._id },
-                isDeleted: false,
-                isBanned: false
-            }).select('username email profile');
-        }
             users = await User.find({
                 $or: keywordConditions,
                 _id: { $ne: req.user._id },
@@ -384,10 +354,7 @@ module.exports = {
     findUsers,
     addUserInterest, 
     updateUserInterest, 
-    addUserInterest, 
-    updateUserInterest, 
     removeUserInterest, 
     updateUserAvatar,
-    getUserById
     getUserById
 };
