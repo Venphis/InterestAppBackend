@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  node_app:
+    build: .
+    container_name: node-server
+    restart: always
+    ports:
+      # local:Dockerfile
+      - "3000:3000"
+    volumes:
+      - ./:/usr/src/app
+      # To prevent issues with node_modules in the bind mount
+      - /usr/src/app/node_modules
+    depends_on:
+      - mongo_db
+    environment:
+      # Use the Docker Compose service name as the hostname for the database
+      - PORT=3000
+      - MONGO_URI=mongodb://mongo_db:27017/HelloBeaconDB
+      - NODE_ENV=development
+      - JWT_SECRET=7151fhuf72h76gban1o3g176rv1c19871b1ew
+
+  mongo_db:
+    image: mongo:latest
+    container_name: mongodb-server
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:
