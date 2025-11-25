@@ -186,6 +186,7 @@ const removeFriendship = async (req, res) => {
     }
 };
 
+
 // @desc    Get user's friendships (friends, pending requests, etc.)
 // @route   GET /api/friendships?status=...
 // @access  Private
@@ -235,9 +236,8 @@ const getFriendships = async (req, res, next) => {
 
     try {
         const friendships = await Friendship.find(query)
-            .populate({ path: 'user1', select: 'username profile isDeleted', match: { isDeleted: false }})
-            .populate({ path: 'user2', select: 'username profile isDeleted', match: { isDeleted: false }})
-            .populate({ path: 'requestedBy', select: 'username isDeleted', match: { isDeleted: false }})
+            .populate({ path: 'user1', match: { isDeleted: false }})
+            .populate({ path: 'user2', match: { isDeleted: false }})
             .sort({ createdAt: -1 })
             .lean();
 
@@ -249,15 +249,11 @@ const getFriendships = async (req, res, next) => {
 
                 return {
                     friendshipId: f._id.toString(),
-                    user: {
-                        _id: otherUserObj._id.toString(),
-                        username: otherUserObj.username,
-                        profile: otherUserObj.profile,
-                    },
+                    user: otherUserObj,
                     status: f.status,
                     friendshipType: f.friendshipType,
                     isPendingRecipient: isPendingRecipient,
-                    requestedByUsername: f.requestedBy ? f.requestedBy.username : null,
+                    requestedBy: f.requestedBy ? f.requestedBy.toString() : null,
                     isBlocked: f.isBlocked,
                     blockedBy: f.blockedBy ? f.blockedBy.toString() : null,
                     createdAt: f.createdAt,
@@ -336,7 +332,7 @@ const verifyFriendship = async (req, res, next) => {
             .populate({ path: 'user1', select: 'username profile', match: { isDeleted: false }})
             .populate({ path: 'user2', select: 'username profile', match: { isDeleted: false }});
 
-        res.status(200).json({ message: 'Friendship verified successfully.', friendship: populatedFriendship.toObject({ getters:false, virtuals:false }) }); // Dodano toObject()
+        res.status(200).json({ message: 'Friendship verified successfully.', friendship: populatedFriendship.toObject({ getters:false, virtuals:false }) });
 
     } catch (error) {
         console.error('[friendshipCtrl] Verify Friendship Error:', error);

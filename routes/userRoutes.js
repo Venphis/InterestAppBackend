@@ -22,7 +22,6 @@ router.route('/profile')
         body('profile.broadcastMessage').optional({ checkFalsy: true }).trim().isLength({ max: 280 }).escape()
     ], updateUserProfile);
 
-router.get('/:id', getUserById)
 
 router.put('/profile/avatar', (req, res, next) => {
     uploadAvatar.single('avatarImage')(req, res, (err) => {
@@ -60,5 +59,8 @@ router.delete('/profile/interests/:userInterestId', userInterestIdValidation, re
 router.get('/search', [
     query('q').notEmpty().withMessage('Search query "q" is required').isString().trim().isLength({min: 1, max: 50}).escape()
 ], findUsers);
+
+
+router.get('/:id', getUserById);
 
 module.exports = router;
