@@ -53,7 +53,7 @@ const fetchChats = async (req, res, next) => {
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     try {
         const chats = await Chat.find({ participants: { $elemMatch: { $eq: req.user._id } } })
-            .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken -__v", match: { isDeleted: false } })
+            .populate({ path: "participants", select: "_id", match: { isDeleted: false } })
             .populate({ path: "lastMessage", select: "-__v"  })
             .sort({ lastMessageTimestamp: -1 })
             .lean(); 
