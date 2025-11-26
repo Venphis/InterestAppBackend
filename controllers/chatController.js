@@ -112,7 +112,11 @@ const sendMessage = async (req, res, next) => {
              });
         }
 
+
         await logAuditEvent('user_sent_message', { type: 'user', id: senderId }, 'info', { type: 'chat', id: chatId }, { messageLength: content.length }, req);
+
+        message = message.toObject();
+        delete message.__v;       
         res.status(200).json(message); 
 
     } catch (error) {
@@ -140,6 +144,7 @@ const allMessages = async (req, res, next) => {
             .sort({ createdAt: -1 }) 
             .skip(skip)
             .limit(limit);
+            .select('-__v')
 
         res.json({
             messages: messages.reverse(), 
