@@ -26,6 +26,7 @@ router.route('/profile')
         body('profile.broadcastMessage').optional({ checkFalsy: true }).trim().isLength({ max: 280 }).escape()
     ], updateUserProfile);
 
+
 // Trasy dla avatara i zainteresowań (zagnieżdżone pod /profile)
 router.put('/profile/avatar', (req, res, next) => {
     uploadAvatar.single('avatarImage')(req, res, (err) => {
@@ -67,6 +68,7 @@ router.get('/search', [
 ], findUsers);
 
 
+
 // --- TRASA Z DYNAMICZNYM PARAMETREM (NA KOŃCU) ---
 
 // Trasa do pobierania profilu DOWOLNEGO użytkownika po ID
@@ -76,3 +78,4 @@ router.get('/:id', [
 
 
 module.exports = router;
+
