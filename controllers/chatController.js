@@ -60,8 +60,7 @@ const fetchChats = async (req, res, next) => {
 
         const validChats = chats.filter(chat => chat.participants && chat.participants.length > 1);
         validChats = validChats.map ( chat =>
-            ..chat,
-            participants: chat.participants.map ( participant =>
+            chat.participants.map ( participant =>
                 participant._id
             )
         )
