@@ -25,7 +25,8 @@ const accessChat = async (req, res, next) => {
             participants: { $all: [currentUserId, userId], $size: 2 } 
         })
         .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken", match: { isDeleted: false } })
-        .populate({ path: "lastMessage"})
+        .populate({ path: "lastMessage", select: "-__v"  })
+        .lean()
 
         if (chat) {
             if (chat.participants.length < 2) { 
@@ -38,6 +39,7 @@ const accessChat = async (req, res, next) => {
         const createdChat = await Chat.create(chatData);
         const fullChat = await Chat.findOne({ _id: createdChat._id })
             .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken", match: { isDeleted: false } });
+            .lean()
 
         await logAuditEvent('user_created_chat', { type: 'user', id: currentUserId }, 'info', { type: 'chat', id: fullChat._id }, { withUser: userId }, req);
         res.status(200).json(fullChat);
@@ -54,7 +56,7 @@ const fetchChats = async (req, res, next) => {
     try {
         const chats = await Chat.find({ participants: { $elemMatch: { $eq: req.user._id } } })
             .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken", match: { isDeleted: false } })
-            .populate({ path: "lastMessage"  })
+            .populate({ path: "lastMessage", select: "-__v"  })
             .sort({ lastMessageTimestamp: -1 })
             .lean(); 
 
