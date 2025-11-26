@@ -37,7 +37,7 @@ const accessChat = async (req, res, next) => {
         const chatData = { participants: [currentUserId, userId] };
         const createdChat = await Chat.create(chatData);
         const fullChat = await Chat.findOne({ _id: createdChat._id })
-            .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken", match: { isDeleted: false } });
+            .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken -__v", match: { isDeleted: false } });
 
         await logAuditEvent('user_created_chat', { type: 'user', id: currentUserId }, 'info', { type: 'chat', id: fullChat._id }, { withUser: userId }, req);
         res.status(200).json(fullChat);
@@ -53,7 +53,7 @@ const fetchChats = async (req, res, next) => {
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     try {
         const chats = await Chat.find({ participants: { $elemMatch: { $eq: req.user._id } } })
-            .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken", match: { isDeleted: false } })
+            .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken -__v", match: { isDeleted: false } })
             .populate({ path: "lastMessage", select: "-__v"  })
             .sort({ lastMessageTimestamp: -1 })
             .lean(); 
