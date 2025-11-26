@@ -59,12 +59,12 @@ const fetchChats = async (req, res, next) => {
             .lean(); 
 
         const validChats = chats.filter(chat => chat.participants && chat.participants.length > 1);
-        validChats = validChats.map { chat =>
+        validChats = validChats.map ( chat =>
             ..chat,
-            participants: chat.participants.map { participant =>
+            participants: chat.participants.map ( participant =>
                 participant._id
-            }
-        }
+            )
+        )
         res.status(200).json(validChats);
     } catch (error) {
         console.error('[chatCtrl] Fetch Chats Error:', error);
