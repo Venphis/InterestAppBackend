@@ -25,12 +25,7 @@ const accessChat = async (req, res, next) => {
             participants: { $all: [currentUserId, userId], $size: 2 } 
         })
         .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken", match: { isDeleted: false } })
-        .populate({ path: "lastMessage", populate: [
-                {path: "senderId", select: "_id", match: { isDeleted: false }}
-                {path: "chatId", select: "_id"}
-                {path: "readBy", select: "_id", match: { isDeleted: false }}
-            ] 
-        })
+        .populate({ path: "lastMessage"})
 
         if (chat) {
             if (chat.participants.length < 2) { 
@@ -59,12 +54,7 @@ const fetchChats = async (req, res, next) => {
     try {
         const chats = await Chat.find({ participants: { $elemMatch: { $eq: req.user._id } } })
             .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken", match: { isDeleted: false } })
-            .populate({ path: "lastMessage", populate: [
-                    {path: "senderId", select: "_id", match: { isDeleted: false }}
-                    {path: "chatId", select: "_id"}
-                    {path: "readBy", select: "_id", match: { isDeleted: false }}
-                ] 
-            })
+            .populate({ path: "lastMessage"  })
             .sort({ lastMessageTimestamp: -1 })
             .lean(); 
 
@@ -105,23 +95,17 @@ const sendMessage = async (req, res, next) => {
                 }
             }
         }
-
+        
         let message = await Message.create({ senderId, content, chatId });
-        message = await message.populate({ path: "senderId", select: "_id", match: { isDeleted: false } });
-        message = await message.populate({
-            path: "chatId",
-            select: "_id"
-            // populate: { path: "participants", select: "_id", match: { isDeleted: false} }
-        });
 
         await Chat.findByIdAndUpdate(chatId, {
             lastMessage: message._id,
             lastMessageTimestamp: message.createdAt
         });
-
+            
         const io = req.app.get('socketio');
-        if (io && message.chatId && message.chatId.participants) {
-             message.chatId.participants.forEach((participant) => {
+        if (io && message.chatId && chat.participants) {
+             chat.participants.forEach((participant) => {
                  if (participant && participant._id && !participant._id.equals(senderId)) {
                     io.to(participant._id.toString()).emit("message received", message.toObject());
                  }
@@ -153,12 +137,6 @@ const allMessages = async (req, res, next) => {
         const totalMessages = await Message.countDocuments({ chatId: req.params.chatId });
 
         const messages = await Message.find({ chatId: req.params.chatId })
-            .populate({ path: "senderId", select: "_id", match: { isDeleted: false } })
-            .populate({ 
-                path: "chatId", 
-                select: "_id"
-                // populate: { path: "participants", select: "_id", match: { isDeleted: false } } 
-            })
             .sort({ createdAt: -1 }) 
             .skip(skip)
             .limit(limit);
