@@ -128,9 +128,17 @@ const findUsers = async (req, res, next) => {
 // @route   GET /api/users/:id
 // @access  Private
 const getUserById = async (req, res, next) => {
-  const userId = req.params.id;
+  // --- OBSŁUGA WALIDACJI NA SAMYM POCZĄTKU ---
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+  // ------------------------------------------
+
+  const userId = req.params.id; // Zmień na `id` zgodnie z definicją trasy
 
   try {
+    // Logika wyszukiwania użytkownika (bez zmian)
     const user = await User.findOne({
       _id: userId,
       isDeleted: false,
@@ -153,11 +161,12 @@ const getUserById = async (req, res, next) => {
       }))
     });
   } catch (error) {
+    // Ten blok 'catch' nie powinien już łapać CastError, bo walidator go zatrzyma.
+    // Będzie łapał inne, nieoczekiwane błędy bazy danych.
     console.error('[userController.js] Get User by ID Error:', error);
     next(error);
   }
 };
-
 
 
 // --- Kontrolery Zainteresowań Użytkownika ---

@@ -20,6 +20,7 @@ const adminReportRoutes = require('./routes/adminReportRoutes');
 const adminInterestRoutes = require('./routes/adminInterestRoutes');
 const adminManagementRoutes = require('./routes/adminManagementRoutes');
 const adminAuditLogRoutes = require('./routes/adminAuditLogRoutes');
+const certificateRoutes = require('./routes/certificateRoutes');
 
 const { Server } = require("socket.io");
 const rateLimit = require('express-rate-limit');
@@ -59,6 +60,7 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/friendships', friendshipRoutes);
 app.use('/api/public/interests', publicInterestRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/certificates', certificateRoutes);
 
 app.use('/api/admin/auth', adminAuthRoutes);
 app.use('/api/admin/users', adminUserRoutes);
