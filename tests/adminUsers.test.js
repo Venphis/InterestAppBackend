@@ -3,6 +3,7 @@ const app = require('../server');
 const User = require('../models/User');
 const AdminUser = require('../models/AdminUser');
 const jwt = require('jsonwebtoken');
+const AuditLog = require('../models/AuditLog');
 const mongoose = require('mongoose');
 const {
     createSuperAdmin,
@@ -13,34 +14,35 @@ const {
     generateUserToken
 } = require('./helpers/factories');
 
-describe('Admin Users API', () => {
-    let superadminToken;
-    let adminToken;
-    let regularUserForTesting;
+const superadminCreds = { username: 'rbac_superadmin', password: 'password123' };
+const adminCreds = { username: 'rbac_admin', password: 'password123' };
+const moderatorCreds = { username: 'rbac_moderator', password: 'password123' };
 
-    const superadminCredentials = { username: 'suiteSuperAdmin_usersApi', password: 'password123' };
-    const adminCredentials = { username: 'suiteAdmin_usersApi', password: 'password123' };
+describe('Admin Users API', () => {
+    let superadminToken, adminToken, moderatorToken; // Dodajemy moderatora
+    let regularUserForTesting;
+    let superadmin, admin; 
+
+    const superadminCredentials = { username: 'rbac_superadmin', password: 'password123' };
+    const adminCredentials = { username: 'rbac_admin', password: 'password123' };
+    const moderatorCredentials = { username: 'rbac_moderator', password: 'password123' };
 
     beforeAll(async () => {
-        await mongoose.connection.collection('adminusers').deleteMany({});
-        await mongoose.connection.collection('users').deleteMany({});
-
-        await createSuperAdmin({ username: superadminCredentials.username, password: superadminCredentials.password });
-        await createAdmin({ username: adminCredentials.username, password: adminCredentials.password });
-
+        await mongoose.connection.dropDatabase();
+        // Stwórz wszystkie role
+        [superadmin, admin, moderator] = await AdminUser.create([
+            { ...superadminCredentials, role: 'superadmin', isActive: true },
+            { ...adminCredentials, role: 'admin', isActive: true },
+            { ...moderatorCredentials, role: 'moderator', isActive: true }
+        ]);
+        // Zaloguj wszystkich adminów
         let res = await request(app).post('/api/admin/auth/login').send(superadminCredentials);
-        expect(res.statusCode).toBe(200);
         superadminToken = res.body.token;
-        if (!superadminToken) throw new Error("Superadmin token not obtained in beforeAll");
-
-
         res = await request(app).post('/api/admin/auth/login').send(adminCredentials);
-        expect(res.statusCode).toBe(200);
         adminToken = res.body.token;
-        if (!adminToken) throw new Error("Admin token not obtained in beforeAll");
-
-
-        regularUserForTesting = await createVerifiedUser({ username: 'regUserForAdminTests', email: 'regAdmTests@example.com' });
+        res = await request(app).post('/api/admin/auth/login').send(moderatorCredentials);
+        moderatorToken = res.body.token;
+        regularUserForTesting = await createVerifiedUser({ username: 'rbac_test_user_for_admin', email: 'rbac_for_admin@example.com' });
     });
 
 
@@ -251,6 +253,26 @@ describe('Admin Users API', () => {
             expect(res.body.errors.some(e => e.path === 'role' && e.msg === 'Role is required.')).toBe(true);
         });
 
+        it('should ban a user (superadmin) and create an audit log entry', async () => {
+        const initialLogCount = await AuditLog.countDocuments();
+        const res = await request(app)
+            .put(`/api/admin/users/${userToModify._id}/ban`)
+            .set('Authorization', `Bearer ${superadminToken}`)
+            .send({ banReason: 'Violation of terms' });
+
+        expect(res.statusCode).toEqual(200);
+
+        // Asercja dla Audit Log
+        const finalLogCount = await AuditLog.countDocuments();
+        expect(finalLogCount).toBe(initialLogCount + 1);
+
+        const logEntry = await AuditLog.findOne({ action: 'admin_banned_user' }).sort({ timestamp: -1 });
+        expect(logEntry).not.toBeNull();
+        expect(logEntry.actorId.toString()).toBe(superadmin._id.toString()); // superadmin jest zdefiniowany w beforeAll
+        expect(logEntry.targetId.toString()).toBe(userToModify._id.toString());
+        expect(logEntry.details.banReason).toBe('Violation of terms');
+    });
+
     });
 
     describe('Test Account Management by Admin', () => {
@@ -297,4 +319,48 @@ describe('Admin Users API', () => {
             expect(res.body.message).toContain('not a designated test account');
         });
     });
+
+    describe('RBAC - Role-Based Access Control', () => {
+        let userToModify;
+
+        beforeEach(async () => {
+            userToModify = await createVerifiedUser({ username: 'rbac_target_user', email: 'rbac_target@example.com' });
+        });
+
+        it('should NOT allow a regular admin to soft delete a user', async () => {
+            const res = await request(app)
+                .delete(`/api/admin/users/${userToModify._id}`)
+                .set('Authorization', `Bearer ${adminToken}`); // Użyj tokenu admina
+
+            expect(res.statusCode).toEqual(403); // Oczekujemy Forbidden
+            expect(res.body.message).toContain('not authorized to access this route');
+        });
+
+        it('should NOT allow a moderator to soft delete a user', async () => {
+            const res = await request(app)
+                .delete(`/api/admin/users/${userToModify._id}`)
+                .set('Authorization', `Bearer ${moderatorToken}`); // Użyj tokenu moderatora
+
+            expect(res.statusCode).toEqual(403);
+        });
+
+        it('should NOT allow a regular admin to restore a soft-deleted user', async () => {
+            await User.findByIdAndUpdate(userToModify._id, { isDeleted: true, deletedAt: new Date() });
+            const res = await request(app)
+                .put(`/api/admin/users/${userToModify._id}/restore`)
+                .set('Authorization', `Bearer ${adminToken}`);
+
+            expect(res.statusCode).toEqual(403);
+        });
+
+        // Testy dla zmiany roli (jeśli masz ten endpoint)
+        it('should NOT allow a regular admin to change a user role', async () => {
+            const res = await request(app)
+                .put(`/api/admin/users/${userToModify._id}/role`)
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ role: 'premium_user' });
+            expect(res.statusCode).toEqual(403);
+        });
+    });
+
 });

@@ -429,3 +429,48 @@ describe('Friendship API', () => {
 
     });
 });
+
+describe('Friendship API with Soft Deleted Users', () => {
+    let activeUser, deletedUser, activeUserToken;
+
+    beforeEach(async () => {
+        // Czyść i twórz użytkowników przed każdym testem w tym bloku
+        await User.deleteMany({ email: /softdelete_friend@/ });
+        activeUser = await createVerifiedUser({ username: 'activeFriend_sd', email: 'softdelete_friend@active.com' });
+        deletedUser = await createVerifiedUser({ username: 'deletedFriend_sd', email: 'softdelete_friend@deleted.com' });
+        // Miękko usuń jednego z nich
+        await User.findByIdAndUpdate(deletedUser._id, { isDeleted: true, deletedAt: new Date() });
+
+        activeUserToken = generateUserToken(activeUser);
+    });
+
+    it('should not allow sending a friend request to a soft-deleted user', async () => {
+        const res = await request(app)
+            .post('/api/friendships/request')
+            .set('Authorization', `Bearer ${activeUserToken}`)
+            .send({ recipientId: deletedUser._id.toString() });
+
+        expect(res.statusCode).toEqual(404); // Kontroler powinien zwrócić 404, bo nie znajduje aktywnego usera
+        expect(res.body.message).toBe('Recipient user not found');
+    });
+
+    it('should not show soft-deleted users in a friends list', async () => {
+        // Stwórz zaakceptowaną znajomość
+        const friendship = await createFriendship({
+            user1: activeUser, user2: deletedUser, requestedBy: activeUser, status: 'accepted'
+        });
+        // Upewnij się, że drugi user jest usunięty (na wszelki wypadek, jeśli testy działają w innej kolejności)
+        await User.findByIdAndUpdate(deletedUser._id, { isDeleted: true, deletedAt: new Date() });
+
+
+        const res = await request(app)
+            .get('/api/friendships?status=accepted')
+            .set('Authorization', `Bearer ${activeUserToken}`);
+
+        expect(res.statusCode).toEqual(200);
+        // Oczekujemy pustej tablicy, ponieważ `getFriendships` powinno odfiltrować relacje
+        // z usuniętymi użytkownikami (dzięki `match: { isDeleted: false }` w `populate`)
+        expect(res.body).toBeInstanceOf(Array);
+        expect(res.body.length).toBe(0);
+    });
+});

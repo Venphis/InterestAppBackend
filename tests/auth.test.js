@@ -63,6 +63,37 @@ describe('Auth API - Registration', () => {
         expect(res.statusCode).toEqual(400);
         expect(res.body).toHaveProperty('errors');
     });
+
+    describe('Validation', () => {
+        it('should fail if username is missing', async () => {
+            const { username, ...rest } = validUserCredentials;
+            const res = await request(app).post('/api/auth/register').send(rest);
+            expect(res.statusCode).toEqual(400);
+            expect(res.body.errors.some(e => e.path === 'username' && e.msg === 'Username is required')).toBe(true);
+        });
+
+        it('should fail if username is too short', async () => {
+            const res = await request(app).post('/api/auth/register').send({ ...validUserCredentials, username: 'ab' });
+            // console.log('Validation errors for short username:', res.body.errors); // Możesz już to usunąć
+            expect(res.statusCode).toEqual(400);
+            // POPRAWKA ASERCJI: Sprawdź, czy wiadomość zawiera np. "must be between 3 and 30"
+            expect(res.body.errors.some(e => e.path === 'username' && e.msg.includes('must be between 3 and 30'))).toBe(true);
+        });
+
+        it('should fail if password is too short', async () => {
+            const res = await request(app).post('/api/auth/register').send({ ...validUserCredentials, password: '123' });
+            expect(res.statusCode).toEqual(400);
+            // POPRAWKA ASERCJI: Sprawdź, czy wiadomość zawiera np. "must be between 6 and 100"
+            expect(res.body.errors.some(e => e.path === 'password' && e.msg.includes('must be between 6 and 100'))).toBe(true);
+        });
+
+        it('should fail if email is invalid', async () => {
+            const res = await request(app).post('/api/auth/register').send({ ...validUserCredentials, email: 'not-a-valid-email' });
+            expect(res.statusCode).toEqual(400);
+            expect(res.body.errors.some(e => e.path === 'email' && e.msg === 'Please provide a valid email')).toBe(true);
+        });
+    });
+
 });
 
 describe('Auth API - Email Verification', () => {
