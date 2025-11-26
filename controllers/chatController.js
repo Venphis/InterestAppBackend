@@ -143,8 +143,8 @@ const allMessages = async (req, res, next) => {
         const messages = await Message.find({ chatId: req.params.chatId })
             .sort({ createdAt: -1 }) 
             .skip(skip)
-            .limit(limit);
-            .select('-__v')
+            .limit(limit)
+            .select('-__v');
 
         res.json({
             messages: messages.reverse(), 
