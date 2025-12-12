@@ -53,13 +53,19 @@ const fetchChats = async (req, res, next) => {
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     try {
         const chats = await Chat.find({ participants: { $elemMatch: { $eq: req.user._id } } })
-            .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken -__v", match: { isDeleted: false } })
+            .populate({ path: "participants", select: "_id", match: { isDeleted: false } })
             .populate({ path: "lastMessage", select: "-__v"  })
             .sort({ lastMessageTimestamp: -1 })
             .lean(); 
 
         const validChats = chats.filter(chat => chat.participants && chat.participants.length > 1);
-        res.status(200).json(validChats);
+        const validChatsMapped = validChats.map(chat => {
+            return {
+                ...chat,
+                participants: chat.participants.map(participant => participant._id)
+            };
+        });
+        res.status(200).json(validChatsMapped);
     } catch (error) {
         console.error('[chatCtrl] Fetch Chats Error:', error);
         next(error);
