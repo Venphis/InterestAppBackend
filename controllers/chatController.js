@@ -25,7 +25,7 @@ const accessChat = async (req, res, next) => {
             participants: { $all: [currentUserId, userId], $size: 2 } 
         })
         .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken", match: { isDeleted: false } })
-        .populate({ path: "lastMessage", populate: { path: "senderId", select: "username profile.avatarUrl", match: { isDeleted: false } } });
+        .populate({ path: "lastMessage", select: "-__v"  })
 
         if (chat) {
             if (chat.participants.length < 2) { 
@@ -37,7 +37,7 @@ const accessChat = async (req, res, next) => {
         const chatData = { participants: [currentUserId, userId] };
         const createdChat = await Chat.create(chatData);
         const fullChat = await Chat.findOne({ _id: createdChat._id })
-            .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken", match: { isDeleted: false } });
+            .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken -__v", match: { isDeleted: false } });
 
         await logAuditEvent('user_created_chat', { type: 'user', id: currentUserId }, 'info', { type: 'chat', id: fullChat._id }, { withUser: userId }, req);
         res.status(200).json(fullChat);
@@ -53,13 +53,19 @@ const fetchChats = async (req, res, next) => {
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
     try {
         const chats = await Chat.find({ participants: { $elemMatch: { $eq: req.user._id } } })
-            .populate({ path: "participants", select: "-password", match: { isDeleted: false } })
-            .populate({ path: "lastMessage", populate: { path: "senderId", select: "username profile.avatarUrl", match: { isDeleted: false } } })
+            .populate({ path: "participants", select: "_id", match: { isDeleted: false } })
+            .populate({ path: "lastMessage", select: "-__v"  })
             .sort({ lastMessageTimestamp: -1 })
             .lean(); 
 
         const validChats = chats.filter(chat => chat.participants && chat.participants.length > 1);
-        res.status(200).json(validChats);
+        const validChatsMapped = validChats.map(chat => {
+            return {
+                ...chat,
+                participants: chat.participants.map(participant => participant._id)
+            };
+        });
+        res.status(200).json(validChatsMapped);
     } catch (error) {
         console.error('[chatCtrl] Fetch Chats Error:', error);
         next(error);
@@ -95,29 +101,28 @@ const sendMessage = async (req, res, next) => {
                 }
             }
         }
-
+        
         let message = await Message.create({ senderId, content, chatId });
-        message = await message.populate({ path: "senderId", select: "username profile.avatarUrl", match: { isDeleted: false } });
-        message = await message.populate({
-            path: "chatId",
-            populate: { path: "participants", select: "username email profile.avatarUrl", match: { isDeleted: false } }
-        });
 
         await Chat.findByIdAndUpdate(chatId, {
             lastMessage: message._id,
             lastMessageTimestamp: message.createdAt
         });
-
+            
         const io = req.app.get('socketio');
-        if (io && message.chatId && message.chatId.participants) {
-             message.chatId.participants.forEach((participant) => {
+        if (io && message.chatId && chat.participants) {
+             chat.participants.forEach((participant) => {
                  if (participant && participant._id && !participant._id.equals(senderId)) {
                     io.to(participant._id.toString()).emit("message received", message.toObject());
                  }
              });
         }
 
+
         await logAuditEvent('user_sent_message', { type: 'user', id: senderId }, 'info', { type: 'chat', id: chatId }, { messageLength: content.length }, req);
+
+        message = message.toObject();
+        delete message.__v;       
         res.status(200).json(message); 
 
     } catch (error) {
@@ -142,10 +147,10 @@ const allMessages = async (req, res, next) => {
         const totalMessages = await Message.countDocuments({ chatId: req.params.chatId });
 
         const messages = await Message.find({ chatId: req.params.chatId })
-            .populate({ path: "senderId", select: "username email profile.avatarUrl", match: { isDeleted: false } })
             .sort({ createdAt: -1 }) 
             .skip(skip)
-            .limit(limit);
+            .limit(limit)
+            .select('-__v');
 
         res.json({
             messages: messages.reverse(), 
