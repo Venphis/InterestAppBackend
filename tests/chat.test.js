@@ -124,17 +124,26 @@ describe('Chat API (/api/chats)', () => {
             expect(res.body[1]._id.toString()).toBe(chatOneThree._id.toString());
         });
 
-        it('should correctly populate participants and the last message', async () => {
+        it('should correctly return participant IDs and the last message object', async () => {
             const res = await request(app)
                 .get('/api/chats')
                 .set('Authorization', `Bearer ${tokenOne}`);
-
+            
+            expect(res.statusCode).toEqual(200);
             const firstChat = res.body[0];
-            expect(firstChat.participants[0]).toHaveProperty('username'); 
-            expect(firstChat.participants[0]).not.toHaveProperty('password');
+
+            expect(firstChat.participants).toBeInstanceOf(Array);
+            expect(firstChat.participants.length).toBe(2);
+            expect(typeof firstChat.participants[0]).toBe('string');
+            expect(firstChat.participants).toContain(userOne._id.toString());
+            expect(firstChat.participants).toContain(userTwo._id.toString());
+
+
+            expect(firstChat).toHaveProperty('lastMessage');
             expect(firstChat.lastMessage._id.toString()).toBe(lastMessage._id.toString());
             expect(firstChat.lastMessage.content).toBe('This is the last message');
-            expect(firstChat.lastMessage.senderId).toHaveProperty('username', userTwo.username);
+            expect(typeof firstChat.lastMessage.senderId).toBe('string');
+            expect(firstChat.lastMessage.senderId.toString()).toBe(userTwo._id.toString());
         });
 
         it('should return an empty array if the user has no chats', async () => {
@@ -186,25 +195,21 @@ describe('Chat API with Soft Deleted Users', () => {
         expect(res.body.length).toBe(0);
     });
 
-    it('should return null for sender if message sender was soft-deleted', async () => {
-        // Stwórz czat i wiadomość
-        const chat = await createChat([activeUser, deletedUser]);
-        await createMessage({ chatId: chat, senderId: deletedUser, content: 'Message from a deleted user' });
+    it('should return senderId as a string even if the sender was soft-deleted', async () => {
+            const chat = await createChat([activeUser, deletedUser]);
+            await createMessage({ chatId: chat, senderId: deletedUser, content: 'Message from a deleted user' });
 
-        // Pobierz wiadomości
-        const res = await request(app)
-            .get(`/api/messages/${chat._id}`)
-            .set('Authorization', `Bearer ${activeUserToken}`);
+            const res = await request(app)
+                .get(`/api/messages/${chat._id}`)
+                .set('Authorization', `Bearer ${activeUserToken}`);
+            
+            expect(res.statusCode).toEqual(200);
+            expect(res.body).toHaveProperty('messages');
+            expect(res.body.messages).toBeInstanceOf(Array);
+            expect(res.body.messages.length).toBe(1);
 
-        // POPRAWKA ASERCJI:
-        expect(res.statusCode).toEqual(200);
-        expect(res.body).toBeInstanceOf(Object); // Oczekujemy obiektu
-        expect(res.body).toHaveProperty('messages'); // Który ma pole 'messages'
-        expect(res.body.messages).toBeInstanceOf(Array); // Pole 'messages' jest tablicą
-        expect(res.body.messages.length).toBe(1); // Oczekujemy jednej wiadomości
-
-        // Oczekujemy, że pole senderId w obiekcie wiadomości będzie `null`
-        expect(res.body.messages[0].senderId).toBeNull();
-        expect(res.body.messages[0].content).toBe('Message from a deleted user');
-    });
+            // POPRAWKA: Oczekujemy stringa ID, a nie null
+            expect(res.body.messages[0].senderId).toBe(deletedUser._id.toString());
+            expect(res.body.messages[0].content).toBe('Message from a deleted user');
+        });
 });

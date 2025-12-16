@@ -13,6 +13,7 @@ const messageRoutes = require('./routes/messageRoutes');
 const friendshipRoutes = require('./routes/friendshipRoutes');
 const publicInterestRoutes = require('./routes/publicInterestRoutes');
 const reportRoutes = require('./routes/reportRoutes');
+const keyRoutes = require('./routes/keyRoutes');
 
 const adminAuthRoutes = require('./routes/adminAuthRoutes');
 const adminUserRoutes = require('./routes/adminUserRoutes');
@@ -61,6 +62,7 @@ app.use('/api/friendships', friendshipRoutes);
 app.use('/api/public/interests', publicInterestRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/certificates', certificateRoutes);
+app.use('/api/keys', keyRoutes);
 
 app.use('/api/admin/auth', adminAuthRoutes);
 app.use('/api/admin/users', adminUserRoutes);

@@ -61,7 +61,11 @@ const UserSchema = new mongoose.Schema({
   deletedAt: {
     type: Date,
     default: null
-  }
+  },
+  publicKey: {
+        type: String,
+        // Nie jest 'required' przy tworzeniu, bo klucz jest generowany i wysyłany przez klienta po pierwszym zalogowaniu
+    }
 }, {
   timestamps: true,
 });
