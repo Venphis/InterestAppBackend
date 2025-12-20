@@ -283,7 +283,7 @@ const resetPassword = async (req, res) => {
             passwordResetTokenExpires: { $gt: Date.now() },
             isDeleted: false,
             isBanned: false
-        }).select('+password'); 
+        }); 
 
         if (!user) {
             await logAuditEvent('user_password_reset_failed', { type: 'system' }, 'warn', {}, { reason: 'Invalid/expired token or inactive/deleted/banned user', tokenAttempt: token }, req);

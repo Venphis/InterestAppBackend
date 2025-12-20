@@ -4,35 +4,31 @@ const app = require('../server');
 const User = require('../models/User');
 const { createVerifiedUser, generateUserToken } = require('./helpers/factories');
 const mongoose = require('mongoose');
-const forge = require('node-forge'); // Ta sama biblioteka, co w kontrolerze
-const fs = require('fs');
+const forge = require('node-forge');
+const fs = require('fs'); // Będziemy używać synchronicznych metod, aby uniknąć problemów w testach
 const path = require('path');
 
-// Funkcja pomocnicza do generowania pary kluczy i CSR
 function generateCsr(commonName) {
     const keys = forge.pki.rsa.generateKeyPair(2048);
     const csr = forge.pki.createCertificationRequest();
     csr.publicKey = keys.publicKey;
     csr.setSubject([{ name: 'commonName', value: commonName }]);
-    // Możesz dodać inne atrybuty, jeśli są wymagane/weryfikowane
     csr.sign(keys.privateKey, forge.md.sha256.create());
     const csrPem = forge.pki.certificationRequestToPem(csr);
-    return { csrPem, keys }; // Zwracamy też klucze na potrzeby testów
+    return { csrPem, keys };
 }
 
 describe('Certificate API (/api/certificates)', () => {
     let testUser;
     let testUserToken;
-    const caDir = path.join(__dirname, '..', 'ca'); // Ścieżka do folderu CA
+    const caDir = path.join(__dirname, '..', 'ca');
+    const issuedFilePath = path.join(caDir, 'issued.json'); // Ścieżka do pliku z wydanymi certyfikatami
 
     beforeAll(async () => {
-        // Wyczyść kolekcję użytkowników
         await mongoose.connection.collection('users').deleteMany({});
-        // Wyczyść folder CA przed uruchomieniem testów, aby zapewnić świeży start
         if (fs.existsSync(caDir)) {
             fs.rmSync(caDir, { recursive: true, force: true });
         }
-
         testUser = await createVerifiedUser({
             username: 'certUser',
             email: 'cert@example.com'
@@ -40,9 +36,8 @@ describe('Certificate API (/api/certificates)', () => {
         testUserToken = generateUserToken(testUser);
     });
 
-    // Wyczyść plik z wydanymi certyfikatami przed każdym testem
     beforeEach(() => {
-        const issuedFilePath = path.join(caDir, 'issued.json');
+        // Czyść plik z wydanymi certyfikatami przed każdym testem
         if (fs.existsSync(issuedFilePath)) {
             fs.unlinkSync(issuedFilePath);
         }
@@ -116,8 +111,6 @@ describe('Certificate API (/api/certificates)', () => {
 
         it('should return an existing valid certificate if one has already been issued', async () => {
             const { csrPem } = generateCsr(testUser.email);
-
-            // Pierwsze żądanie - wydanie certyfikatu
             const res1 = await request(app)
                 .post('/api/certificates/issue')
                 .set('Authorization', `Bearer ${testUserToken}`)
@@ -125,14 +118,82 @@ describe('Certificate API (/api/certificates)', () => {
             expect(res1.statusCode).toEqual(201);
             const firstCertPem = res1.body.certPem;
 
-            // Drugie żądanie - powinno zwrócić ten sam (lub istniejący) certyfikat
             const res2 = await request(app)
                 .post('/api/certificates/issue')
                 .set('Authorization', `Bearer ${testUserToken}`)
-                .send({ csrPem }); // Wyślij ten sam lub nowy CSR
+                .send({ csrPem });
 
-            expect(res2.statusCode).toEqual(200); // Oczekujemy 200 OK
+            expect(res2.statusCode).toEqual(200);
             expect(res2.body.certPem).toBe(firstCertPem);
+        });
+
+        // --- NOWY TEST DLA ODNAWIANIA WYGASŁEGO CERTYFIKATU ---
+        it('should issue a NEW certificate (renew) if the existing one has expired', async () => {
+            // Krok 1: Wygeneruj i wydaj pierwszy (stary) certyfikat
+            const { csrPem } = generateCsr(testUser.email);
+            const res1 = await request(app)
+                .post('/api/certificates/issue')
+                .set('Authorization', `Bearer ${testUserToken}`)
+                .send({ csrPem });
+            expect(res1.statusCode).toEqual(201);
+            const oldCertPem = res1.body.certPem;
+
+            // Krok 2: "Podróż w czasie" - zmodyfikuj datę ważności w zapisanym certyfikacie
+            // Aby to zrobić, musimy zmodyfikować datę w certyfikacie PEM, co jest trudne.
+            // PROSTSZE PODEJŚCIE: Stwórzmy ręcznie wygasły certyfikat i zapiszmy go w `issued.json`.
+
+            // Wyczyść stan po pierwszym wydaniu
+            if (fs.existsSync(issuedFilePath)) {
+                fs.unlinkSync(issuedFilePath);
+            }
+
+            // Stwórz ręcznie wygasły certyfikat
+            const keys = forge.pki.rsa.generateKeyPair(2048);
+            const expiredCert = forge.pki.createCertificate();
+            expiredCert.publicKey = keys.publicKey;
+            expiredCert.serialNumber = '01';
+            const pastDate = new Date();
+            pastDate.setFullYear(pastDate.getFullYear() - 2); // Data w przeszłości
+            const expiredDate = new Date();
+            expiredDate.setFullYear(expiredDate.getFullYear() - 1); // Data w przeszłości
+            expiredCert.validity.notBefore = pastDate;
+            expiredCert.validity.notAfter = expiredDate;
+            const attrs = [{ name: 'commonName', value: testUser.email }];
+            expiredCert.setSubject(attrs);
+            expiredCert.setIssuer(attrs); // W prostym teście, wystawca może być taki sam
+            expiredCert.sign(keys.privateKey, forge.md.sha256.create());
+            const expiredCertPem = forge.pki.certificateToPem(expiredCert);
+
+            // Zapisz wygasły certyfikat do pliku, symulując, że został wydany dawno temu
+            const issuedData = {
+                [testUser.email]: {
+                    issuedAt: pastDate.toISOString(),
+                    serial: expiredCert.serialNumber,
+                    certPem: expiredCertPem
+                }
+            };
+            fs.writeFileSync(issuedFilePath, JSON.stringify(issuedData, null, 2));
+
+            // Krok 3: Wyślij nowe żądanie CSR, aby odnowić certyfikat
+            const { csrPem: newCsrPem } = generateCsr(testUser.email);
+            const res2 = await request(app)
+                .post('/api/certificates/issue')
+                .set('Authorization', `Bearer ${testUserToken}`)
+                .send({ csrPem: newCsrPem });
+
+            // Oczekujemy, że serwer wyda NOWY certyfikat ze statusem 201
+            expect(res2.statusCode).toEqual(201);
+            const newCertPem = res2.body.certPem;
+
+            // Upewnij się, że nowy certyfikat jest inny niż stary, wygasły
+            expect(newCertPem).toBeDefined();
+            expect(newCertPem).not.toBe(expiredCertPem);
+
+            // Sprawdź datę ważności nowego certyfikatu
+            const newCert = forge.pki.certificateFromPem(newCertPem);
+            const now = new Date();
+            // Sprawdź, czy `notAfter` jest w przyszłości (z małym marginesem na czas wykonania testu)
+            expect(newCert.validity.notAfter.getTime()).toBeGreaterThan(now.getTime());
         });
     });
 });

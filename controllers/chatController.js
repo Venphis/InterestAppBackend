@@ -75,20 +75,42 @@ const fetchChats = async (req, res, next) => {
 const sendMessage = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+    // Oczekujemy teraz `content` jako obiektu, a nie stringa
     const { content, chatId } = req.body;
     const senderId = req.user._id;
 
     try {
         const chat = await Chat.findOne({
             _id: chatId,
-            participants: senderId, 
-            'participants.isDeleted': { $ne: true } 
+            participants: senderId
         }).populate('participants');
 
         if (!chat) {
             return res.status(404).json({ message: "Chat not found or you are not a participant." });
         }
 
+        // --- ZMIENIONA LOGIKA WALIDACJI i OBSŁUGI `content` ---
+        // Sprawdź, czy `content` jest obiektem i zawiera klucze dla wszystkich uczestników (oprócz nadawcy)
+        if (typeof content !== 'object' || content === null || Array.isArray(content)) {
+            return res.status(400).json({ message: "Invalid content format. Expected an object of encrypted messages." });
+        }
+
+        const recipientIds = chat.participants
+            .map(p => p._id.toString())
+            .filter(id => id !== senderId.toString());
+        
+        // Każdy odbiorca musi mieć swój szyfrogram. Nadawca też musi mieć (dla siebie).
+        const allParticipantIds = chat.participants.map(p => p._id.toString());
+        const contentKeys = Object.keys(content);
+
+        if (!allParticipantIds.every(id => contentKeys.includes(id))) {
+            return res.status(400).json({ message: "Content must include an encrypted version for every chat participant." });
+        }
+        // -----------------------------------------------------------
+
+
+        // Sprawdzenie blokady (bez zmian)
         if (chat.participants.length === 2) {
             const recipient = chat.participants.find(p => !p._id.equals(senderId));
             if (recipient) {
@@ -96,30 +118,30 @@ const sendMessage = async (req, res, next) => {
                     $or: [ { user1: senderId, user2: recipient._id }, { user1: recipient._id, user2: senderId } ]
                 });
                 if (friendship && friendship.isBlocked) {
-                    await logAuditEvent('user_send_message_failed_blocked', { type: 'user', id: senderId }, 'warn', { type: 'chat', id: chatId }, { recipientId: recipient._id }, req);
                     return res.status(403).json({ message: "Cannot send message, user is blocked." });
                 }
             }
         }
         
+        // Zapisz wiadomość (teraz `content` jest obiektem)
         let message = await Message.create({ senderId, content, chatId });
 
         await Chat.findByIdAndUpdate(chatId, {
             lastMessage: message._id,
             lastMessageTimestamp: message.createdAt
         });
-            
+
         const io = req.app.get('socketio');
         if (io && message.chatId && chat.participants) {
              chat.participants.forEach((participant) => {
                  if (participant && participant._id && !participant._id.equals(senderId)) {
+                    // Wyślij cały obiekt wiadomości, klient sam wybierze, co odszyfrować
                     io.to(participant._id.toString()).emit("message received", message.toObject());
                  }
              });
         }
 
-
-        await logAuditEvent('user_sent_message', { type: 'user', id: senderId }, 'info', { type: 'chat', id: chatId }, { messageLength: content.length }, req);
+        await logAuditEvent('user_sent_message', { type: 'user', id: senderId }, 'info', { type: 'chat', id: chatId }, { encryptedFor: contentKeys.length }, req);
 
         message = message.toObject();
         delete message.__v;       

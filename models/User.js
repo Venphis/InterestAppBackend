@@ -62,10 +62,30 @@ const UserSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
-  publicKey: {
-        type: String,
-        // Nie jest 'required' przy tworzeniu, bo klucz jest generowany i wysyłany przez klienta po pierwszym zalogowaniu
-    }
+  publicKey: { // Długożyjący klucz publiczny E2EE użytkownika (w formacie Base64)
+    type: String,
+    default: null,
+  },
+  backup: {
+    type: { 
+        encryptedPrivateKey: { type: String, default: null },
+        encryptedBackupKey: { type: String, default: null },
+        passwordDerivationParams: {
+          type: {
+              algorithm: { type: String, required: true }, // Np. 'argon2id13'
+              salt: { type: String, required: true },      // Sól w Base64
+              opsLimit: { type: Number, required: true },  // Liczba iteracji
+              memLimit: { type: Number, required: true },  // Koszt pamięci w bajtach
+              parallelism: { type: Number, required: true }, // Stopień równoległości
+              hashLength: { type: Number, required: true }  // Długość wynikowego klucza w bajtach
+          },
+          default: null, // Zmień na null, bo pusty obiekt nie ma sensu bez wymaganych pól
+          _id: false
+              }
+    },
+    select: false, 
+    default: {} 
+  }
 }, {
   timestamps: true,
 });
@@ -84,9 +104,9 @@ UserSchema.pre('save', async function(next) {
 });
 
 UserSchema.methods.comparePassword = async function(candidatePassword) {
-  const userWithPassword = await mongoose.model('User').findById(this._id).select('+password');
-  if (!userWithPassword) return false;
-  return bcrypt.compare(candidatePassword, userWithPassword.password);
+    const userWithPassword = await mongoose.model('User').findById(this._id).select('+password');
+    if (!userWithPassword || !userWithPassword.password) return false;
+    return bcrypt.compare(candidatePassword, userWithPassword.password);
 };
 
 module.exports = mongoose.model('User', UserSchema);

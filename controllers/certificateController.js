@@ -94,9 +94,9 @@ exports.issueCertificate = async (req, res, next) => { // Dodano next
             caCertPem
           });
         }
-        console.log(`Certificate for ${userId} has expired. Re-issuing.`);
+        //console.log(`Certificate for ${userId} has expired. Re-issuing.`);
       } catch (parseError) {
-        console.warn(`Could not parse existing certificate for ${userId}, reissuing. Error:`, parseError.message);
+        //console.warn(`Could not parse existing certificate for ${userId}, reissuing. Error:`, parseError.message);
       }
     }
 

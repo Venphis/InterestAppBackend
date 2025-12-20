@@ -11,7 +11,8 @@ const chatIdValidation = [param('chatId').isMongoId().withMessage('Invalid Chat 
 
 router.post('/', [
     body('chatId').isMongoId().withMessage('Chat ID is required and must be valid.'),
-    body('content').trim().notEmpty().withMessage('Message content cannot be empty.').isLength({ max: 5000 }).withMessage('Message content max 5000 chars.')
+    body('content').isObject().withMessage('Content must be an object.'),
+    body('content.*').isString().notEmpty().withMessage('Encrypted content for each recipient must be a non-empty string.')
 ], sendMessage);
 
 router.get('/:chatId', [

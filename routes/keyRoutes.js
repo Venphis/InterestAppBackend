@@ -2,19 +2,20 @@
 const express = require('express');
 const { body, param } = require('express-validator');
 const { protect } = require('../middleware/authMiddleware');
-const { publishPublicKey, getPublicKeys } = require('../controllers/keyController'); // Nowy kontroler
+const { publishPublicKey, getPublicKey } = require('../controllers/keyController');
 const router = express.Router();
 
-router.use(protect); // Wszystkie trasy chronione
+router.use(protect);
 
-// Endpoint dla zalogowanego użytkownika do publikacji swojego klucza publicznego
 router.post('/publish', [
-    body('publicKey').isString().notEmpty().withMessage('Public key is required.')
+    body('publicKey')
+        .trim()
+        .notEmpty().withMessage('Public key is required.')
+        .isString().withMessage('Public key must be a string.')
 ], publishPublicKey);
 
-// Endpoint do pobrania kluczy publicznych innych użytkowników (po ID)
 router.get('/:userId', [
-    param('userId').isMongoId().withMessage('Invalid User ID.')
-], getPublicKeys);
+    param('userId').isMongoId().withMessage('Invalid User ID format.')
+], getPublicKey);
 
 module.exports = router;
