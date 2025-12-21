@@ -31,18 +31,21 @@ router.route('/profile')
 router.put('/profile/avatar', (req, res, next) => {
     uploadAvatar.single('avatarImage')(req, res, (err) => {
         if (err) {
+            // Jeśli jest błąd, wyślij odpowiedź i ZAKOŃCZ funkcję (return)
             if (err instanceof multer.MulterError) {
                 if (err.code === 'LIMIT_FILE_SIZE') {
                     return res.status(400).json({ message: 'File too large. Maximum size is 5MB.' });
                 }
                 return res.status(400).json({ message: err.message });
-            } else if (err) {
-                if (err.message === 'Not an image! Please upload only images.') {
+            } else {
+                // Inne błędy (np. z fileFilter)
+                if (err.code === 'INVALID_FILE_TYPE' || err.message === 'Not an image! Please upload only images.') {
                      return res.status(400).json({ message: 'Not an image! Please upload only images.' });
                 }
                 return res.status(400).json({ message: err.message });
             }
         }
+        // Tylko jeśli NIE MA błędu, przejdź dalej
         next();
     });
 }, updateUserAvatar);

@@ -68,8 +68,24 @@ const UserSchema = new mongoose.Schema({
   },
   backup: {
     type: { 
-        encryptedPrivateKey: { type: String, default: null },
-        encryptedBackupKey: { type: String, default: null },
+        encryptedPrivateKey: {
+            type: {
+                iv: { type: String, required: true },
+                tag: { type: String, required: true }, // Lub tagLength, zależy od biblioteki
+                ciphertext: { type: String, required: true }
+            },
+            default: null
+        },
+        encryptedBackupKey: {
+            type: {
+                iv: { type: String, required: true },
+                tag: { type: String, required: true },
+                ciphertext: { type: String, required: true }
+            },
+            default: null
+        },
+        publicKey: { type: String, default: null },
+        passwordVerifier: { type: String, default: null },
         passwordDerivationParams: {
           type: {
               algorithm: { type: String, required: true }, // Np. 'argon2id13'
