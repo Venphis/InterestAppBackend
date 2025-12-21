@@ -67,40 +67,53 @@ const UserSchema = new mongoose.Schema({
     default: null,
   },
   backup: {
-    type: { 
-        encryptedPrivateKey: {
-            type: {
-                iv: { type: String, required: true },
-                tag: { type: String, required: true }, // Lub tagLength, zależy od biblioteki
-                ciphertext: { type: String, required: true }
-            },
-            default: null
-        },
-        encryptedBackupKey: {
-            type: {
-                iv: { type: String, required: true },
-                tag: { type: String, required: true },
-                ciphertext: { type: String, required: true }
-            },
-            default: null
-        },
+    type: {
         publicKey: { type: String, default: null },
-        passwordVerifier: { type: String, default: null },
+
+        // Same szyfrogramy (tylko ciphertext w Base64)
+        encryptedPrivateKey: { type: String, default: null },
+        encryptedBackupKey: { type: String, default: null },
+
+        // Parametry derywacji hasła (wraz z weryfikatorem)
         passwordDerivationParams: {
-          type: {
-              algorithm: { type: String, required: true }, // Np. 'argon2id13'
-              salt: { type: String, required: true },      // Sól w Base64
-              opsLimit: { type: Number, required: true },  // Liczba iteracji
-              memLimit: { type: Number, required: true },  // Koszt pamięci w bajtach
-              parallelism: { type: Number, required: true }, // Stopień równoległości
-              hashLength: { type: Number, required: true }  // Długość wynikowego klucza w bajtach
-          },
-          default: null, // Zmień na null, bo pusty obiekt nie ma sensu bez wymaganych pól
-          _id: false
-              }
+            type: {
+                algorithm: { type: String, required: true },
+                salt: { type: String, required: true },
+                opsLimit: { type: Number, required: true },
+                memLimit: { type: Number, required: true },
+                parallelism: { type: Number, required: true },
+                hashLength: { type: Number, required: true },
+                verificator: { type: String, required: true } // <-- To jest weryfikator hasła
+            },
+            default: null,
+            _id: false
+        },
+
+        // Parametry szyfrowania dla klucza backupowego
+        backupEncryptionParams: {
+            type: {
+                algorithm: { type: String, required: true },
+                iv: { type: String, required: true },
+                tagLength: { type: Number, required: true }
+                // Tutaj też mógłby być tag, jeśli biblioteka go nie dokleja do ciphertextu
+            },
+            default: null,
+            _id: false
+        },
+
+        // Parametry szyfrowania dla klucza prywatnego
+        privateEncryptionParams: {
+            type: {
+                algorithm: { type: String, required: true },
+                iv: { type: String, required: true },
+                tagLength: { type: Number, required: true }
+            },
+            default: null,
+            _id: false
+        }
     },
-    select: false, 
-    default: {} 
+    select: false,
+    default: {}
   }
 }, {
   timestamps: true,

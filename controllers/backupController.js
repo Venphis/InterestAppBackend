@@ -11,19 +11,28 @@ const saveBackup = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { encryptedPrivateKey, encryptedBackupKey, passwordDerivationParams, publicKey, passwordVerifier } = req.body;
+    // Pobieramy dane zgodnie z nową strukturą
+    const {
+        publicKey,
+        encryptedPrivateKey,
+        encryptedBackupKey,
+        passwordDerivationParams,
+        backupEncryptionParams,
+        privateEncryptionParams
+    } = req.body;
+
     const userId = req.user._id;
 
     try {
         const updateData = {
+            'backup.publicKey': publicKey,
             'backup.encryptedPrivateKey': encryptedPrivateKey,
             'backup.encryptedBackupKey': encryptedBackupKey,
             'backup.passwordDerivationParams': passwordDerivationParams,
-            'backup.publicKey': publicKey,
-            'backup.passwordVerifier': passwordVerifier
+            'backup.backupEncryptionParams': backupEncryptionParams,
+            'backup.privateEncryptionParams': privateEncryptionParams
         };
 
-        // Użyj findByIdAndUpdate, aby zaktualizować tylko pola backupu
         const user = await User.findByIdAndUpdate(userId, { $set: updateData }, { new: true });
 
         if (!user) {
@@ -67,27 +76,29 @@ const updateBackupPassword = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { encryptedBackupKey, passwordDerivationParams, passwordVerifier } = req.body
+    const {
+        encryptedBackupKey,
+        passwordDerivationParams,
+        backupEncryptionParams // Nowe parametry szyfrowania dla nowego klucza backupowego
+    } = req.body;
     const userId = req.user._id;
 
     try {
-        // Sprawdź, czy użytkownik ma już backup. Jeśli nie, nie może zmienić hasła.
         const user = await User.findById(userId).select('+backup');
         if (!user || !user.backup || !user.backup.encryptedPrivateKey) {
             return res.status(404).json({ message: "No existing backup found to update password for." });
         }
 
-        // Zaktualizuj tylko te pola, które są związane z hasłem
+        // Aktualizujemy klucz backupowy i związane z nim parametry
         user.backup.encryptedBackupKey = encryptedBackupKey;
         if (passwordDerivationParams) {
             user.backup.passwordDerivationParams = passwordDerivationParams;
         }
-
-        if (passwordVerifier) {
-            user.backup.passwordVerifier = passwordVerifier;
+        if (backupEncryptionParams) {
+            user.backup.backupEncryptionParams = backupEncryptionParams;
         }
 
-        await user.save(); // `save()` zamiast `findByIdAndUpdate`, bo pracujemy na dokumencie
+        await user.save();
 
         await logAuditEvent('user_updated_backup_password', { type: 'user', id: userId }, 'info', {}, {}, req);
         res.status(200).json({ message: 'Backup password components updated successfully.' });
@@ -102,15 +113,17 @@ const verifyBackupPassword = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { passwordVerifier } = req.body;
+    const { passwordVerifier } = req.body; // Klient przysyła obliczony weryfikator
     try {
+        // Pobieramy cały backup, w którym jest passwordDerivationParams
         const user = await User.findById(req.user._id).select('+backup');
 
-        if (!user || !user.backup || !user.backup.passwordVerifier) {
+        if (!user || !user.backup || !user.backup.passwordDerivationParams || !user.backup.passwordDerivationParams.verificator) {
             return res.status(404).json({ message: "No backup or verifier found for this user." });
         }
 
-        const storedVerifier = Buffer.from(user.backup.passwordVerifier, 'base64');
+        // Pobieramy zapisany weryfikator z zagnieżdżonego obiektu
+        const storedVerifier = Buffer.from(user.backup.passwordDerivationParams.verificator, 'base64');
         const suppliedVerifier = Buffer.from(passwordVerifier, 'base64');
 
         if (storedVerifier.length !== suppliedVerifier.length) {

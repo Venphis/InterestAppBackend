@@ -13,51 +13,53 @@ const router = express.Router();
 router.use(protect);
 
 router.post('/', [
-    // Walidacja encryptedPrivateKey (obiekt)
-    body('encryptedPrivateKey').isObject().withMessage('encryptedPrivateKey must be an object'),
-    body('encryptedPrivateKey.iv').isString().notEmpty().withMessage('encryptedPrivateKey.iv is required'),
-    body('encryptedPrivateKey.tag').isString().notEmpty().withMessage('encryptedPrivateKey.tag is required'),
-    body('encryptedPrivateKey.ciphertext').isString().notEmpty().withMessage('encryptedPrivateKey.ciphertext is required'),
-
-    // Walidacja encryptedBackupKey (obiekt)
-    body('encryptedBackupKey').isObject().withMessage('encryptedBackupKey must be an object'),
-    body('encryptedBackupKey.iv').isString().notEmpty().withMessage('encryptedBackupKey.iv is required'),
-    body('encryptedBackupKey.tag').isString().notEmpty().withMessage('encryptedBackupKey.tag is required'),
-    body('encryptedBackupKey.ciphertext').isString().notEmpty().withMessage('encryptedBackupKey.ciphertext is required'),
-
-    // Walidacja passwordDerivationParams (obiekt)
-    body('passwordDerivationParams').isObject().withMessage('passwordDerivationParams must be an object.'),
-    body('passwordDerivationParams.algorithm').isString().notEmpty().withMessage('Algorithm is required.'),
-    body('passwordDerivationParams.salt').isString().notEmpty().withMessage('Salt must be a string.'), // Zmieniono z isBase64 na isString dla elastyczności, ale Base64 jest zalecany
-    body('passwordDerivationParams.opsLimit').isInt().withMessage('opsLimit must be an integer.'),
-    body('passwordDerivationParams.memLimit').isInt().withMessage('memLimit must be an integer.'),
-    body('passwordDerivationParams.parallelism').isInt().withMessage('parallelism must be an integer.'),
-    body('passwordDerivationParams.hashLength').isInt().withMessage('hashLength must be an integer.'),
-
-    // Walidacja dodatkowych pól
     body('publicKey').isString().notEmpty().withMessage('publicKey is required'),
-    body('passwordVerifier').isString().notEmpty().withMessage('passwordVerifier is required') // Zmieniono z isBase64 na isString
+
+    body('encryptedPrivateKey').isString().notEmpty().withMessage('encryptedPrivateKey is required (Base64 string)'),
+    body('encryptedBackupKey').isString().notEmpty().withMessage('encryptedBackupKey is required (Base64 string)'),
+
+    body('passwordDerivationParams').isObject().withMessage('passwordDerivationParams must be an object'),
+    body('passwordDerivationParams.algorithm').isString().notEmpty().withMessage('Algorithm is required'),
+    body('passwordDerivationParams.salt').isString().notEmpty().withMessage('Salt must be a string (Base64)'),
+    body('passwordDerivationParams.opsLimit').isInt().withMessage('opsLimit must be an integer'),
+    body('passwordDerivationParams.memLimit').isInt().withMessage('memLimit must be an integer'),
+    body('passwordDerivationParams.parallelism').isInt().withMessage('parallelism must be an integer'),
+    body('passwordDerivationParams.hashLength').isInt().withMessage('hashLength must be an integer'),
+    body('passwordDerivationParams.verificator').isString().notEmpty().withMessage('verificator is required'),
+
+    body('backupEncryptionParams').isObject().withMessage('backupEncryptionParams must be an object'),
+    body('backupEncryptionParams.algorithm').isString().notEmpty().withMessage('backupEncryptionParams.algorithm is required'),
+    body('backupEncryptionParams.iv').isString().notEmpty().withMessage('backupEncryptionParams.iv is required'),
+    body('backupEncryptionParams.tagLength').isInt().withMessage('backupEncryptionParams.tagLength must be an integer'),
+
+    body('privateEncryptionParams').isObject().withMessage('privateEncryptionParams must be an object'),
+    body('privateEncryptionParams.algorithm').isString().notEmpty().withMessage('privateEncryptionParams.algorithm is required'),
+    body('privateEncryptionParams.iv').isString().notEmpty().withMessage('privateEncryptionParams.iv is required'),
+    body('privateEncryptionParams.tagLength').isInt().withMessage('privateEncryptionParams.tagLength must be an integer')
 ], saveBackup);
 
 router.get('/', getBackup);
 
+// Pełna walidacja dla zmiany hasła backupu
 router.put('/password', [
-    // Walidacja encryptedBackupKey (obiekt) - przy zmianie hasła
-    body('encryptedBackupKey').isObject().withMessage('New encryptedBackupKey must be an object.'),
-    body('encryptedBackupKey.iv').isString().notEmpty().withMessage('encryptedBackupKey.iv is required'),
-    body('encryptedBackupKey.tag').isString().notEmpty().withMessage('encryptedBackupKey.tag is required'),
-    body('encryptedBackupKey.ciphertext').isString().notEmpty().withMessage('encryptedBackupKey.ciphertext is required'),
+    // Nowy zaszyfrowany klucz backupowy (zaszyfrowany nowym kluczem z hasła)
+    body('encryptedBackupKey').isString().notEmpty().withMessage('New encryptedBackupKey is required (Base64 string)'),
 
-    // Walidacja passwordDerivationParams (opcjonalne przy zmianie hasła, ale jeśli jest, to pełne)
-    body('passwordDerivationParams').optional().isObject(),
-    body('passwordDerivationParams.algorithm').optional().isString().notEmpty(),
-    body('passwordDerivationParams.salt').optional().isString().notEmpty(),
-    body('passwordDerivationParams.opsLimit').optional().isInt(),
-    body('passwordDerivationParams.memLimit').optional().isInt(),
-    body('passwordDerivationParams.parallelism').optional().isInt(),
-    body('passwordDerivationParams.hashLength').optional().isInt(),
+    // Nowe parametry derywacji hasła (ponieważ hasło się zmieniło, sól i weryfikator też się zmieniły)
+    body('passwordDerivationParams').isObject().withMessage('New passwordDerivationParams required'),
+    body('passwordDerivationParams.algorithm').isString().notEmpty().withMessage('Algorithm is required'),
+    body('passwordDerivationParams.salt').isString().notEmpty().withMessage('Salt must be a string (Base64)'),
+    body('passwordDerivationParams.opsLimit').isInt().withMessage('opsLimit must be an integer'),
+    body('passwordDerivationParams.memLimit').isInt().withMessage('memLimit must be an integer'),
+    body('passwordDerivationParams.parallelism').isInt().withMessage('parallelism must be an integer'),
+    body('passwordDerivationParams.hashLength').isInt().withMessage('hashLength must be an integer'),
+    body('passwordDerivationParams.verificator').isString().notEmpty().withMessage('verificator is required'),
 
-    body('passwordVerifier').isString().notEmpty().withMessage('passwordVerifier is required for password change')
+    // Nowe parametry szyfrowania dla klucza backupowego (nowe IV)
+    body('backupEncryptionParams').isObject().withMessage('New backupEncryptionParams required'),
+    body('backupEncryptionParams.algorithm').isString().notEmpty().withMessage('backupEncryptionParams.algorithm is required'),
+    body('backupEncryptionParams.iv').isString().notEmpty().withMessage('backupEncryptionParams.iv is required'),
+    body('backupEncryptionParams.tagLength').isInt().withMessage('backupEncryptionParams.tagLength must be an integer')
 ], updateBackupPassword);
 
 router.post('/verify-password', [
