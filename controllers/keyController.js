@@ -1,7 +1,6 @@
 // controllers/keyController.js
 const User = require('../models/User');
 const { validationResult } = require('express-validator');
-const logAuditEvent = require('../utils/auditLogger');
 
 // @desc    Publish or update the logged-in user's public key
 // @route   POST /api/keys/publish
@@ -23,7 +22,6 @@ const publishPublicKey = async (req, res, next) => {
         user.publicKey = publicKey;
         await user.save({ validateBeforeSave: false });
 
-        await logAuditEvent(action, { type: 'user', id: userId }, 'info', {}, { publicKey: publicKey.substring(0, 20) + '...' }, req);
         res.status(200).json({ message: 'Public key published successfully.' });
     } catch (error) {
         console.error('[keyController] Publish Public Key Error:', error);

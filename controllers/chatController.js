@@ -3,7 +3,6 @@ const Message = require('../models/Message');
 const User = require('../models/User');
 const Friendship = require('../models/Friendship');
 const { validationResult } = require('express-validator');
-const logAuditEvent = require('../utils/auditLogger'); 
 const mongoose = require('mongoose');
 
 const accessChat = async (req, res, next) => {
@@ -39,7 +38,6 @@ const accessChat = async (req, res, next) => {
         const fullChat = await Chat.findOne({ _id: createdChat._id })
             .populate({ path: "participants", select: "-password -emailVerificationToken -passwordResetToken -__v", match: { isDeleted: false } });
 
-        await logAuditEvent('user_created_chat', { type: 'user', id: currentUserId }, 'info', { type: 'chat', id: fullChat._id }, { withUser: userId }, req);
         res.status(200).json(fullChat);
 
     } catch (error) {
@@ -140,8 +138,6 @@ const sendMessage = async (req, res, next) => {
                  }
              });
         }
-
-        await logAuditEvent('user_sent_message', { type: 'user', id: senderId }, 'info', { type: 'chat', id: chatId }, { encryptedFor: contentKeys.length }, req);
 
         message = message.toObject();
         delete message.__v;       

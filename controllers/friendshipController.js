@@ -2,7 +2,6 @@ const Friendship = require('../models/Friendship');
 const User = require('../models/User');
 const mongoose = require('mongoose'); 
 const { validationResult } = require('express-validator');
-const logAuditEvent = require('../utils/auditLogger');
 
 const orderIdsForQuery = (id1, id2) => {
     const strId1 = id1.toString();
@@ -320,14 +319,6 @@ const verifyFriendship = async (req, res, next) => {
         const updatedFriendship = await friendship.save();
 
         const otherUserId = currentUserId.equals(friendship.user1) ? friendship.user2 : friendship.user1;
-        await logAuditEvent(
-            'user_verified_friendship',
-            { type: 'user', id: currentUserId },
-            'info',
-            { type: 'user', id: otherUserId },
-            { friendshipId: updatedFriendship._id },
-            req
-        );
         const populatedFriendship = await Friendship.findById(updatedFriendship._id)
             .populate({ path: 'user1', select: 'username profile', match: { isDeleted: false }})
             .populate({ path: 'user2', select: 'username profile', match: { isDeleted: false }});
@@ -365,7 +356,6 @@ const blockFriendship = async (req, res, next) => {
         friendship.isBlocked = true;
         const updatedFriendship = await friendship.save();
 
-        await logAuditEvent('user_blocked_friendship', {type: 'user', id: currentUserId}, 'info', {type: 'friendship', id: updatedFriendship._id}, {oldStatus, targetUser: currentUserId.equals(friendship.user1) ? friendship.user2 : friendship.user1}, req);
         res.status(200).json({ message: 'Friendship blocked.', friendship: updatedFriendship.toObject({ getters:false, virtuals:false }) });
     } catch (error) {
         console.error('[friendshipCtrl] Block Friendship Error:', error);
@@ -399,7 +389,6 @@ const unblockFriendship = async (req, res, next) => {
         friendship.blockedBy = null; 
         const updatedFriendship = await friendship.save();
 
-        await logAuditEvent('user_unblocked_friendship', {type: 'user', id: currentUserId}, 'info', {type: 'friendship', id: updatedFriendship._id}, {oldStatus, targetUser: currentUserId.equals(friendship.user1) ? friendship.user2 : friendship.user1}, req);
         res.status(200).json({ message: 'Friendship unblocked.', friendship: updatedFriendship.toObject({ getters:false, virtuals:false }) });
     } catch (error) {
         console.error('[friendshipCtrl] Unblock Friendship Error:', error);

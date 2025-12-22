@@ -4,6 +4,9 @@ const User = require('../models/User');
 const AdminUser = require('../models/AdminUser');
 const jwt = require('jsonwebtoken');
 const AuditLog = require('../models/AuditLog');
+const Interest = require('../models/Interest');
+const InterestCategory = require('../models/InterestCategory');
+const UserInterest = require('../models/UserInterest');
 const mongoose = require('mongoose');
 const {
     createSuperAdmin,
@@ -105,6 +108,143 @@ describe('Admin Users API', () => {
             expect(res.body.users.every(u => u.isDeleted === false)).toBe(true);
         });
     });
+
+    describe('GET /api/admin/users/:userId/interests', () => {
+    let targetUser;
+    let category;
+    let interest1, interest2;
+
+    beforeEach(async () => {
+        // Czyścimy dane powiązane z tym testem
+        await UserInterest.deleteMany({});
+        // Uwaga: jeśli masz dużo testów i inne też używają Interest/Category, możesz ograniczyć deleteMany filtrami.
+        await Interest.deleteMany({ name: { $in: ['Test Interest 1', 'Test Interest 2'] } });
+        await InterestCategory.deleteMany({ name: { $in: ['Test Category'] } });
+
+        targetUser = await createVerifiedUser({
+            username: 'interests_target_user',
+            email: 'interests_target@example.com'
+        });
+
+        // Tworzymy kategorię i zainteresowania (przykładowo)
+        category = await InterestCategory.create({
+            name: 'Test Category',
+            description: 'Category description'
+        });
+
+        interest1 = await Interest.create({
+            name: 'Test Interest 1',
+            description: 'Interest 1 description',
+            category: category._id,
+            isArchived: false
+        });
+
+        interest2 = await Interest.create({
+            name: 'Test Interest 2',
+            description: 'Interest 2 description',
+            category: category._id,
+            isArchived: true
+        });
+
+        // Linkujemy usera z zainteresowaniami
+        await UserInterest.create([
+            {
+                userId: targetUser._id,
+                interestId: interest1._id,
+                customDescription: 'Custom desc 1'
+            },
+            {
+                userId: targetUser._id,
+                interestId: interest2._id,
+                customDescription: 'Custom desc 2'
+            }
+        ]);
+    });
+
+    it('should allow superadmin to get user interests', async () => {
+        const res = await request(app)
+            .get(`/api/admin/users/${targetUser._id}/interests`)
+            .set('Authorization', `Bearer ${superadminToken}`);
+
+        expect(res.statusCode).toEqual(200);
+        expect(Array.isArray(res.body)).toBe(true);
+        expect(res.body.length).toBe(2);
+
+        // sprawdź format pierwszego elementu
+        const first = res.body[0];
+        expect(first).toHaveProperty('userInterestId');
+        expect(first).toHaveProperty('interestId');
+        expect(first).toHaveProperty('name');
+        expect(first).toHaveProperty('category');
+        expect(first).toHaveProperty('description');
+        expect(first).toHaveProperty('customDescription');
+        expect(first).toHaveProperty('isArchived');
+        expect(first).toHaveProperty('createdAt');
+
+        // sprawdź, że zwraca nasze interesty (bez założenia kolejności)
+        const names = res.body.map(x => x.name);
+        expect(names).toEqual(expect.arrayContaining(['Test Interest 1', 'Test Interest 2']));
+
+        // sprawdź, że kategoria jest zpopulowana (bo w controllerze robisz nested populate)
+        const anyWithCategory = res.body.find(x => x.name === 'Test Interest 1');
+        expect(anyWithCategory.category).toBeTruthy();
+        expect(anyWithCategory.category).toHaveProperty('_id');
+        expect(anyWithCategory.category).toHaveProperty('name', 'Test Category');
+    });
+
+    it('should allow admin to get user interests', async () => {
+        const res = await request(app)
+            .get(`/api/admin/users/${targetUser._id}/interests`)
+            .set('Authorization', `Bearer ${adminToken}`);
+
+        expect(res.statusCode).toEqual(200);
+        expect(res.body.length).toBe(2);
+    });
+
+    it('should allow moderator to get user interests', async () => {
+        const res = await request(app)
+            .get(`/api/admin/users/${targetUser._id}/interests`)
+            .set('Authorization', `Bearer ${moderatorToken}`);
+
+        expect(res.statusCode).toEqual(200);
+        expect(res.body.length).toBe(2);
+    });
+
+    it('should return empty array when user has no interests', async () => {
+        // Usuń powiązania
+        await UserInterest.deleteMany({ userId: targetUser._id });
+
+        const res = await request(app)
+            .get(`/api/admin/users/${targetUser._id}/interests`)
+            .set('Authorization', `Bearer ${adminToken}`);
+
+        expect(res.statusCode).toEqual(200);
+        expect(Array.isArray(res.body)).toBe(true);
+        expect(res.body.length).toBe(0);
+    });
+
+    it('should return 404 if user not found', async () => {
+        const nonExistingUserId = new mongoose.Types.ObjectId().toString();
+
+        const res = await request(app)
+            .get(`/api/admin/users/${nonExistingUserId}/interests`)
+            .set('Authorization', `Bearer ${adminToken}`);
+
+        expect(res.statusCode).toEqual(404);
+        expect(res.body.message).toContain('User not found');
+    });
+
+    it('should return 400 for invalid userId format (validation error)', async () => {
+        const res = await request(app)
+            .get('/api/admin/users/invalid-id/interests')
+            .set('Authorization', `Bearer ${adminToken}`);
+
+        expect(res.statusCode).toEqual(400);
+        expect(res.body).toHaveProperty('errors');
+        expect(Array.isArray(res.body.errors)).toBe(true);
+    });
+});
+
 
     describe('User Actions by Admin', () => {
         let userToModify;
