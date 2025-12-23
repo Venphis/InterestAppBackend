@@ -196,20 +196,26 @@ describe('Chat API with Soft Deleted Users', () => {
     });
 
     it('should return senderId as a string even if the sender was soft-deleted', async () => {
-            const chat = await createChat([activeUser, deletedUser]);
-            await createMessage({ chatId: chat, senderId: deletedUser, content: 'Message from a deleted user' });
+        const chat = await createChat([activeUser, deletedUser]);
+        // ZMIANA: Content musi być obiektem z kluczem dla activeUser (bo to on pobiera)
+        const contentObj = {
+            [activeUser._id.toString()]: 'Message from a deleted user' // Uproszczona treść, nie musi być szyfrogramem JSON dla tego testu
+        };
 
-            const res = await request(app)
-                .get(`/api/messages/${chat._id}`)
-                .set('Authorization', `Bearer ${activeUserToken}`);
-            
-            expect(res.statusCode).toEqual(200);
-            expect(res.body).toHaveProperty('messages');
-            expect(res.body.messages).toBeInstanceOf(Array);
-            expect(res.body.messages.length).toBe(1);
-
-            // POPRAWKA: Oczekujemy stringa ID, a nie null
-            expect(res.body.messages[0].senderId).toBe(deletedUser._id.toString());
-            expect(res.body.messages[0].content).toBe('Message from a deleted user');
+        await createMessage({
+            chatId: chat,
+            senderId: deletedUser,
+            content: contentObj // Przekazujemy obiekt
         });
+
+        const res = await request(app)
+            .get(`/api/messages/${chat._id}`)
+            .set('Authorization', `Bearer ${activeUserToken}`);
+
+        expect(res.statusCode).toEqual(200);
+        expect(res.body.messages.length).toBe(1);
+
+        expect(res.body.messages[0].senderId).toBe(deletedUser._id.toString());
+        expect(res.body.messages[0].content[activeUser._id.toString()]).toBe('Message from a deleted user');
+    });
 });

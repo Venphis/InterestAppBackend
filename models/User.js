@@ -66,6 +66,7 @@ const UserSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  lastKeyRotationDate: { type: Date, default: null },
   backup: {
     type: {
         publicKey: { type: String, default: null },

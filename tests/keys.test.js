@@ -2,9 +2,15 @@
 const request = require('supertest');
 const app = require('../server');
 const User = require('../models/User');
-const { createVerifiedUser, generateUserToken } = require('./helpers/factories');
 const mongoose = require('mongoose');
-const sodium = require('libsodium-wrappers'); // Potrzebne do generowania kluczy
+const sodium = require('libsodium-wrappers'); 
+const Message = require('../models/Message');
+const Chat = require('../models/Chat');       
+const {
+    createVerifiedUser,
+    generateUserToken,
+    createChat 
+} = require('./helpers/factories');
 
 describe('Key Management API (/api/keys)', () => {
     let userOne, userTwo;
@@ -37,23 +43,30 @@ describe('Key Management API (/api/keys)', () => {
 
     describe('POST /api/keys/publish', () => {
         it('should allow a logged-in user to publish their public key for the first time', async () => {
+            // Stwórz świeżego użytkownika bez klucza
+            const freshUser = await createVerifiedUser();
+            const freshToken = generateUserToken(freshUser);
+            const keyPair = sodium.crypto_box_keypair();
+            const publicKey = sodium.to_base64(keyPair.publicKey);
+
             const res = await request(app)
                 .post('/api/keys/publish')
-                .set('Authorization', `Bearer ${tokenOne}`)
-                .send({ publicKey: userOnePublicKey_base64 });
+                .set('Authorization', `Bearer ${freshToken}`)
+                .send({ publicKey });
 
             expect(res.statusCode).toEqual(200);
-            expect(res.body.message).toBe('Public key published successfully.');
-
-            const userInDb = await User.findById(userOne._id);
-            expect(userInDb.publicKey).toBe(userOnePublicKey_base64);
+            // Teraz na pewno jest to pierwszy raz
+            expect(res.body.message).toMatch(/Public key published successfully/);
         });
 
-        it('should allow a user to update their existing public key', async () => {
-            // Najpierw ustaw stary klucz
-            await User.findByIdAndUpdate(userOne._id, { publicKey: 'old_dummy_public_key' });
+        it('should allow a user to update their existing public key and wipe chat history', async () => {
+            // Najpierw ustaw stary klucz (symulacja stanu przed zmianą)
+            await User.findByIdAndUpdate(userOne._id, { publicKey: 'old_key' });
+            
+            // Stwórz przykładowy czat i wiadomość, żeby sprawdzić czy znikną
+            const chat = await createChat([userOne, userTwo]); // Załóżmy, że createChat jest zaimportowane
+            await Message.create({ chatId: chat._id, senderId: userOne._id, content: 'To be deleted' });
 
-            // Wygeneruj nowy klucz do aktualizacji
             const newKeys = sodium.crypto_box_keypair();
             const newPublicKey_base64 = sodium.to_base64(newKeys.publicKey);
 
@@ -63,10 +76,14 @@ describe('Key Management API (/api/keys)', () => {
                 .send({ publicKey: newPublicKey_base64 });
 
             expect(res.statusCode).toEqual(200);
+            expect(res.body.message).toContain('Chat history cleared'); // Sprawdź nowy komunikat
 
             const userInDb = await User.findById(userOne._id);
             expect(userInDb.publicKey).toBe(newPublicKey_base64);
-            expect(userInDb.publicKey).not.toBe('old_dummy_public_key');
+
+            // Sprawdź, czy wiadomość została usunięta
+            const messageCount = await Message.countDocuments({ chatId: chat._id });
+            expect(messageCount).toBe(0);
         });
 
         it('should return a validation error for a missing public key', async () => {

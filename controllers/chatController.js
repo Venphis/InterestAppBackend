@@ -87,6 +87,18 @@ const sendMessage = async (req, res, next) => {
             return res.status(404).json({ message: "Chat not found or you are not a participant." });
         }
 
+        const participantIds = chat.participants.map(p => p._id.toString());
+
+        const missing = participantIds.filter(pid =>
+            !Object.prototype.hasOwnProperty.call(content, pid)
+        );
+
+        if (missing.length > 0) {
+            return res.status(400).json({
+                message: 'Content must include an encrypted version for every chat participant.'
+            });
+        }
+
         // Sprawdzenie blokady (bez zmian)
         if (chat.participants.length === 2) {
             const recipient = chat.participants.find(p => !p._id.equals(senderId));
@@ -130,7 +142,9 @@ const sendMessage = async (req, res, next) => {
 const allMessages = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+    
     try {
+        // 1. Sprawdź dostęp do czatu
         const chat = await Chat.findOne({ _id: req.params.chatId, participants: req.user._id });
         if (!chat) {
             return res.status(403).json({ message: "You are not authorized to view messages for this chat." });
@@ -140,19 +154,50 @@ const allMessages = async (req, res, next) => {
         const page = parseInt(req.query.page) || 1;  
         const skip = (page - 1) * limit;
 
-        const totalMessages = await Message.countDocuments({ chatId: req.params.chatId });
+        // 2. Pobierz aktualnego użytkownika, aby sprawdzić datę rotacji klucza
+        const currentUser = await User.findById(req.user._id);
 
-        const messages = await Message.find({ chatId: req.params.chatId })
+        // 3. Pobierz wiadomości (tylko te, które mają content dla usera)
+        const totalMessages = await Message.countDocuments({ 
+            chatId: req.params.chatId,
+            [`content.${req.user._id}`]: { $exists: true } 
+        });
+
+        const messages = await Message.find({
+                chatId: req.params.chatId,
+                [`content.${req.user._id}`]: { $exists: true } 
+            })
             .sort({ createdAt: -1 }) 
             .skip(skip)
             .limit(limit)
             .select('-__v');
 
+        // 4. NOWOŚĆ: Sprawdź "dziurę" w historii
+        let historyTruncated = false;
+        if (currentUser.lastKeyRotationDate) {
+             // Sprawdź, czy istnieją w tym czacie jakiekolwiek wiadomości starsze niż data zmiany klucza
+             // (nawet te "wyczyszczone", czyli bez content.userId)
+             const olderMessagesCount = await Message.countDocuments({
+                chatId: req.params.chatId,
+                createdAt: { $lt: currentUser.lastKeyRotationDate }
+             });
+             
+             // Jeśli są stare wiadomości, ale my ich nie widzimy (bo zostały wyczyszczone z naszego contentu), to jest dziura
+             if (olderMessagesCount > 0) {
+                 historyTruncated = true;
+             }
+        }
+
+        // 5. Zwróć odpowiedź z nowymi polami
         res.json({
             messages: messages.reverse(), 
             currentPage: page,
             totalPages: Math.ceil(totalMessages / limit),
-            totalMessages
+            totalMessages,
+            // --- NOWE POLA DLA FRONTENDU ---
+            historyUnavailableReason: historyTruncated ? 'key_rotation' : null,
+            lastKeyRotationDate: currentUser.lastKeyRotationDate
+            // -------------------------------
         });
 
     } catch (error) {

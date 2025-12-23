@@ -246,4 +246,67 @@ describe('Message API (/api/messages) with E2EE', () => {
             expect(res.body.message).toContain("You are not authorized to view messages for this chat.");
         });
     });
+
+    describe('Key Rotation Impact', () => {
+        let rotationUserOne, rotationUserTwo;
+        let rotationTokenOne, rotationTokenTwo;
+        let rotationChat;
+
+        beforeEach(async () => {
+            await mongoose.connection.collection('users').deleteMany({});
+            await mongoose.connection.collection('chats').deleteMany({});
+            await mongoose.connection.collection('messages').deleteMany({});
+
+            rotationUserOne = await createVerifiedUser({ username: 'rotUser1', email: 'rot1@ex.com' });
+            rotationUserTwo = await createVerifiedUser({ username: 'rotUser2', email: 'rot2@ex.com' });
+            rotationTokenOne = generateUserToken(rotationUserOne);
+            rotationTokenTwo = generateUserToken(rotationUserTwo);
+
+            // Ustaw początkowe klucze
+            const key1 = sodium.crypto_box_keypair();
+            const key2 = sodium.crypto_box_keypair();
+            await User.findByIdAndUpdate(rotationUserOne._id, { publicKey: sodium.to_base64(key1.publicKey) });
+            await User.findByIdAndUpdate(rotationUserTwo._id, { publicKey: sodium.to_base64(key2.publicKey) });
+
+            rotationChat = await createChat([rotationUserOne, rotationUserTwo]);
+
+            const contentObj = {
+                [rotationUserOne._id.toString()]: 'Message 1 content',
+                [rotationUserTwo._id.toString()]: 'Message 1 content'
+            };
+            await createMessage({ chatId: rotationChat, senderId: rotationUserOne, content: contentObj });
+            await createMessage({ chatId: rotationChat, senderId: rotationUserTwo, content: contentObj });
+        });
+
+        it('should wipe history for the other user if one participant rotates their key', async () => {
+            // 1. Sprawdź, czy userTwo widzi wiadomości przed rotacją
+            let res = await request(app)
+                .get(`/api/messages/${rotationChat._id}`)
+                .set('Authorization', `Bearer ${rotationTokenTwo}`);
+            expect(res.statusCode).toEqual(200);
+            expect(res.body.messages.length).toBe(2);
+
+            // 2. userOne zmienia (aktualizuje) swój klucz publiczny
+            const newKeys = sodium.crypto_box_keypair();
+            const newPublicKey = sodium.to_base64(newKeys.publicKey);
+
+            res = await request(app)
+                .post('/api/keys/publish')
+                .set('Authorization', `Bearer ${rotationTokenOne}`) // userOne rotuje
+                .send({ publicKey: newPublicKey });
+
+            expect(res.statusCode).toEqual(200);
+            expect(res.body.message).toContain('Chat history cleared'); // Upewnij się, że kontroler zwraca taki komunikat
+
+            // 3. Sprawdź, czy userTwo (który NIE zmieniał klucza) widzi teraz pustą historię
+            res = await request(app)
+                .get(`/api/messages/${rotationChat._id}`)
+                .set('Authorization', `Bearer ${rotationTokenTwo}`);
+
+            expect(res.statusCode).toEqual(200);
+            expect(res.body.messages).toBeInstanceOf(Array);
+            expect(res.body.messages.length).toBe(0); // Historia powinna być pusta
+        });
+    });
+
 });
