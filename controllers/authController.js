@@ -182,7 +182,7 @@ const loginUser = async (req, res) => {
     const { email, password } = req.body;
 
     try {
-        const user = await User.findOne({ email, isDeleted: false });
+        const user = await User.findOne({ email, isDeleted: false }).select('+backup'); ;
 
         if (!user) {
             await logAuditEvent('user_login_failed', { type: 'system' }, 'warn', {}, { attemptEmail: email, reason: 'User not found or deleted' }, req);
@@ -204,6 +204,10 @@ const loginUser = async (req, res) => {
         }
 
         const isMatch = await user.comparePassword(password);
+        const isBackedUp = !!(
+              user.backup?.encryptedPrivateKey &&
+              user.backup?.encryptedBackupKey );
+
 
         if (isMatch) {
             await logAuditEvent('user_login_success', { type: 'user', id: user._id }, 'info', {}, {}, req);
@@ -215,6 +219,7 @@ const loginUser = async (req, res) => {
                 role: user.role,
                 isTestAccount: user.isTestAccount,
                 token: generateToken(user._id),
+                isBackedUp: isBackedUp
             });
         } else {
             await logAuditEvent('user_login_failed', { type: 'user', id: user._id }, 'warn', {}, { reason: 'Invalid password' }, req);

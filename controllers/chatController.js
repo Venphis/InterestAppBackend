@@ -76,7 +76,6 @@ const sendMessage = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    // Oczekujemy teraz `content` jako obiektu, a nie stringa
     const { content, chatId } = req.body;
     const senderId = req.user._id;
 
@@ -89,26 +88,6 @@ const sendMessage = async (req, res, next) => {
         if (!chat) {
             return res.status(404).json({ message: "Chat not found or you are not a participant." });
         }
-
-        // --- ZMIENIONA LOGIKA WALIDACJI i OBSŁUGI `content` ---
-        // Sprawdź, czy `content` jest obiektem i zawiera klucze dla wszystkich uczestników (oprócz nadawcy)
-        if (typeof content !== 'object' || content === null || Array.isArray(content)) {
-            return res.status(400).json({ message: "Invalid content format. Expected an object of encrypted messages." });
-        }
-
-        const recipientIds = chat.participants
-            .map(p => p._id.toString())
-            .filter(id => id !== senderId.toString());
-        
-        // Każdy odbiorca musi mieć swój szyfrogram. Nadawca też musi mieć (dla siebie).
-        const allParticipantIds = chat.participants.map(p => p._id.toString());
-        const contentKeys = Object.keys(content);
-
-        if (!allParticipantIds.every(id => contentKeys.includes(id))) {
-            return res.status(400).json({ message: "Content must include an encrypted version for every chat participant." });
-        }
-        // -----------------------------------------------------------
-
 
         // Sprawdzenie blokady (bez zmian)
         if (chat.participants.length === 2) {
@@ -123,7 +102,6 @@ const sendMessage = async (req, res, next) => {
             }
         }
         
-        // Zapisz wiadomość (teraz `content` jest obiektem)
         let message = await Message.create({ senderId, content, chatId });
 
         await Chat.findByIdAndUpdate(chatId, {
