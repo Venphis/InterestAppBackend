@@ -2,7 +2,7 @@ const express = require('express');
 const { body, param, query } = require('express-validator');
 const {
     getAllUsers, getUserById, banUser, unbanUser, deleteUser, restoreUser,
-    manuallyVerifyEmail, createTestUser, generateTestUserToken,changeUserRole
+    manuallyVerifyEmail, createTestUser, generateTestUserToken,changeUserRole, getUserInterestsAdmin
 } = require('../controllers/adminUsersController');
 const { protectAdmin, authorizeAdminRole } = require('../middleware/adminAuthMiddleware');
 const router = express.Router();
@@ -50,5 +50,12 @@ router.put(
   ],
   changeUserRole
 );
+
+router.get('/:userId/interests',
+    authorizeAdminRole(['admin', 'superadmin', 'moderator']), // Moderator też powinien móc widzieć
+    userIdValidation,
+    getUserInterestsAdmin
+);
+
 
 module.exports = router;

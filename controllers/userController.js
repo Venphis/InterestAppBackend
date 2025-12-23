@@ -1,7 +1,6 @@
 const User = require('../models/User');
 const UserInterest = require('../models/UserInterest');
 const Interest = require('../models/Interest'); 
-const logAuditEvent = require('../utils/auditLogger');
 const fs = require('fs');
 const path = require('path');
 const { validationResult } = require('express-validator');
@@ -55,7 +54,6 @@ const updateUserProfile = async (req, res) => {
 
         const updatedUser = await user.save();
         const userInterests = await UserInterest.find({ userId: updatedUser._id }).populate('interestId', 'name category');
-        await logAuditEvent('user_profile_updated_text', { type: 'user', id: req.user._id }, 'info', {}, { updatedFields: Object.keys(profileUpdates) }, req);
         res.json({
             ...updatedUser.toObject({ virtuals: true }), 
              interests: userInterests.map(ui => ({
@@ -201,8 +199,6 @@ const addUserInterest = async (req, res, next) => { // Dodaj next
             customDescription: customDescription || ''
         });
 
-        await logAuditEvent('user_added_interest', { type: 'user', id: userId }, 'info', { type: 'interest', id: interestId }, { userInterestId: newUserInterest._id }, req);
-
         const populatedInterest = await UserInterest.findById(newUserInterest._id)
                                                   .populate('interestId', 'name category isArchived');
 
@@ -323,12 +319,6 @@ const updateUserAvatar = async (req, res) => {
         user.profile.avatarUrl = relativePath;
         await user.save();
 
-        await logAuditEvent(
-            'user_avatar_updated',
-            { type: 'user', id: req.user._id },
-            'info', {}, { newAvatarPath: relativePath }, req
-        );
-
         res.json({
             message: 'Avatar updated successfully.',
             avatarUrl: relativePath, 
@@ -342,7 +332,6 @@ const updateUserAvatar = async (req, res) => {
     } catch (error) {
         console.error('Update Avatar Error:', error);
         fs.unlink(req.file.path, (err) => { if (err) console.error("Error deleting uploaded avatar on DB error:", err); });
-        await logAuditEvent('user_avatar_update_error', { type: 'user', id: req.user._id }, 'error', {}, { error: error.message }, req);
         res.status(500).json({ message: 'Server error updating avatar.' });
     }
 };
@@ -358,4 +347,3 @@ module.exports = {
     updateUserAvatar,
     getUserById
 };
-//tekst

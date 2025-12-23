@@ -435,6 +435,48 @@ const changeUserRole = async (req, res, next) => {
     }
 };
 
+// @desc    Get all interests for a specific user (admin view)
+// @route   GET /api/admin/users/:userId/interests
+// @access  Private (Admin/Superadmin/Moderator)
+const getUserInterestsAdmin = async (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+    const { userId } = req.params;
+
+    try {
+        const user = await User.findById(userId);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const userInterests = await UserInterest.find({ userId: userId })
+            .populate({
+                path: 'interestId',
+                select: 'name description category isArchived', // Wybierz pola z modelu Interest
+                populate: { path: 'category', select: 'name description' } // Zagnieżdżona populacja kategorii
+            });
+
+        // Mapowanie wyników do czytelniejszego formatu (opcjonalne, ale pomocne)
+        const formattedInterests = userInterests.map(ui => ({
+            userInterestId: ui._id,
+            interestId: ui.interestId ? ui.interestId._id : null,
+            name: ui.interestId ? ui.interestId.name : 'Unknown Interest (Deleted)',
+            category: ui.interestId && ui.interestId.category ? ui.interestId.category : null,
+            description: ui.interestId ? ui.interestId.description : '',
+            customDescription: ui.customDescription,
+            isArchived: ui.interestId ? ui.interestId.isArchived : false,
+            createdAt: ui.createdAt
+        }));
+
+        res.json(formattedInterests);
+    } catch (error) {
+        console.error('[adminUsersController] Get User Interests Error:', error);
+        next(error);
+    }
+};
+
+
 
 module.exports = {
     getAllUsers,
@@ -446,5 +488,5 @@ module.exports = {
     generateTestUserToken,
     deleteUser,
     restoreUser,
-    changeUserRole
-};
+    changeUserRole,
+    getUserInterestsAdmin};
