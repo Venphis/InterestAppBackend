@@ -87,19 +87,6 @@ const sendMessage = async (req, res, next) => {
             return res.status(404).json({ message: "Chat not found or you are not a participant." });
         }
 
-        const participantIds = chat.participants.map(p => p._id.toString());
-
-        const missing = participantIds.filter(pid =>
-            !Object.prototype.hasOwnProperty.call(content, pid)
-        );
-
-        if (missing.length > 0) {
-            return res.status(400).json({
-                message: 'Content must include an encrypted version for every chat participant.'
-            });
-        }
-
-        // Sprawdzenie blokady (bez zmian)
         if (chat.participants.length === 2) {
             const recipient = chat.participants.find(p => !p._id.equals(senderId));
             if (recipient) {

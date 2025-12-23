@@ -11,9 +11,7 @@ const chatIdValidation = [param('chatId').isMongoId().withMessage('Invalid Chat 
 
 router.post('/', [
     body('chatId').isMongoId().withMessage('Chat ID is required and must be valid.'),
-    // ZMIANA: Walidacja dla content jako obiektu
-    body('content').isObject().withMessage('Content must be an object.'),
-    body('content.*').isString().notEmpty()
+    body('content').isString().notEmpty.withMessage('Content must be a non-empty String.'),
 ], sendMessage);
 
 router.get('/:chatId', [
