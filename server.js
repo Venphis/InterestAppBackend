@@ -23,10 +23,15 @@ const adminInterestRoutes = require('./routes/adminInterestRoutes');
 const adminManagementRoutes = require('./routes/adminManagementRoutes');
 const adminAuditLogRoutes = require('./routes/adminAuditLogRoutes');
 const certificateRoutes = require('./routes/certificateRoutes');
+const adminLanguageRoutes = require('./routes/adminLanguageRoutes');
 
 const { Server } = require("socket.io");
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
+
+const { ensurePolishLanguage } = require('./utils/seedLanguages');
+
+
 
 dotenv.config();
 
@@ -72,6 +77,7 @@ app.use('/api/admin/reports', adminReportRoutes);
 app.use('/api/admin/interests', adminInterestRoutes);
 app.use('/api/admin/management', adminManagementRoutes);
 app.use('/api/admin/audit-logs', adminAuditLogRoutes);
+app.use('/api/admin/languages', adminLanguageRoutes);
 
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
@@ -174,7 +180,8 @@ app.use(async (err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 
 if (require.main === module && process.env.NODE_ENV !== 'test') {
-    connectDB().then(() => {
+    connectDB().then(async () => {
+        await ensurePolishLanguage(); 
         httpServer.listen(PORT, () => {
             console.log(`Server running on PORT ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
         });
@@ -183,7 +190,10 @@ if (require.main === module && process.env.NODE_ENV !== 'test') {
         process.exit(1);
     });
 } else if (process.env.NODE_ENV !== 'test') {
-    connectDB().catch(err => console.error("DB connection failed on import (non-test):", err));
+    connectDB()
+      .then(() => ensurePolishLanguage()) 
+      .catch(err => console.error("DB connection failed on import (non-test):", err));
 }
+
 
 module.exports = app;

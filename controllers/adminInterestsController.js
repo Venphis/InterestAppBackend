@@ -1,10 +1,11 @@
 const Interest = require('../models/Interest');
 const InterestCategory = require('../models/InterestCategory');
-const UserInterest = require('../models/UserInterest'); 
+const UserInterest = require('../models/UserInterest');
 const { validationResult } = require('express-validator');
 const logAuditEvent = require('../utils/auditLogger');
 
-const { DEFAULT_LANG } = require('../config/i18n');
+const Language = require('../models/Language');      // <-- RAZ
+const { DEFAULT_LANG } = require('../config/i18n');  // <-- RAZ
 const normalizeLang = (lang) => String(lang || '').trim().toLowerCase();
 
 
