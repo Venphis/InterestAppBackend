@@ -249,6 +249,27 @@ const getAllInterestsAdmin = async (req, res) => {
     }
 };
 
+// @desc    Get single interest by ID (admin)
+// @route   GET /api/admin/interests/:interestId
+// @access  Private (Admin/Superadmin/Moderator)
+const getInterestByIdAdmin = async (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+  try {
+    const interest = await Interest.findById(req.params.interestId)
+      .populate('category', 'name description i18n') // przydatne do panelu + i18n
+      .exec();
+
+    if (!interest) return res.status(404).json({ message: 'Interest not found.' });
+
+    res.json(interest);
+  } catch (error) {
+    console.error('[adminInterestsCtrl] Get Interest By ID Error:', error);
+    next(error);
+  }
+};
+
 const updateInterest = async (req, res, next) => { 
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
@@ -351,6 +372,7 @@ module.exports = {
     upsertInterestTranslation,
     createInterest,
     getAllInterestsAdmin,
+    getInterestByIdAdmin,
     updateInterest,
     archiveInterest,
     restoreInterest  

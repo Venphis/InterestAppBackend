@@ -3,7 +3,7 @@ const { body, param, query } = require('express-validator');
 const mongoose = require('mongoose');
 const {
     createInterestCategory, getAllInterestCategories, updateInterestCategory, deleteInterestCategory,upsertInterestCategoryTranslation,
-upsertInterestTranslation, createInterest, getAllInterestsAdmin, updateInterest, archiveInterest, restoreInterest
+upsertInterestTranslation, createInterest, getAllInterestsAdmin,getInterestByIdAdmin, updateInterest, archiveInterest, restoreInterest
 } = require('../controllers/adminInterestsController');
 const { protectAdmin, authorizeAdminRole } = require('../middleware/adminAuthMiddleware');
 
@@ -50,6 +50,7 @@ router.route('/')
     ], getAllInterestsAdmin);
 
 router.route('/:interestId')
+    .get(authorizeAdminRole(['admin', 'superadmin', 'moderator']), interestIdValidation, getInterestByIdAdmin)
     .put(authorizeAdminRole(['admin', 'superadmin']), [
         ...interestIdValidation,
         body('name').optional({checkFalsy: true}).trim().isLength({min:1, max: 100}).withMessage('Interest name must be 1-100 characters.').escape(),

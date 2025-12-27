@@ -306,4 +306,56 @@ describe('Admin Interests API', () => {
             expect(res.statusCode).toBe(400);
         });
     });
+
+    describe('GET /api/admin/interests/:interestId', () => {
+        let interest;
+        let category;
+
+        beforeEach(async () => {
+        const suffix = new mongoose.Types.ObjectId().toString().slice(-6);
+        category = await createInterestCategory({ name: `Cat For GetById ${suffix}` });
+        interest = await createInterest({ name: `Interest GetById ${suffix}`, category });
+        });
+
+        it('should allow admin to get a single interest by id (with populated category)', async () => {
+            const res = await request(app)
+            .get(`/api/admin/interests/${interest._id}`)
+            .set('Authorization', `Bearer ${adminToken}`);
+
+            expect(res.statusCode).toBe(200);
+            expect(res.body).toBeTruthy();
+            expect(res.body._id.toString()).toBe(interest._id.toString());
+            expect(res.body.name).toBe(interest.name);
+
+            // category populated
+            expect(res.body.category).toBeTruthy();
+            expect(res.body.category._id.toString()).toBe(category._id.toString());
+            expect(res.body.category.name).toBe(category.name);
+        });
+
+        it('should return 404 if interest does not exist', async () => {
+            const fakeId = new mongoose.Types.ObjectId();
+
+            const res = await request(app)
+            .get(`/api/admin/interests/${fakeId}`)
+            .set('Authorization', `Bearer ${adminToken}`);
+
+            expect(res.statusCode).toBe(404);
+            expect(res.body.message).toMatch(/not found/i);
+        });
+
+        it('should return 400 for invalid interestId', async () => {
+            const res = await request(app)
+            .get(`/api/admin/interests/invalidId`)
+            .set('Authorization', `Bearer ${adminToken}`);
+
+            expect(res.statusCode).toBe(400);
+            expect(res.body).toHaveProperty('errors');
+        });
+
+        it('should return 401 if no auth token provided', async () => {
+            const res = await request(app).get(`/api/admin/interests/${interest._id}`);
+            expect(res.statusCode).toBe(401);
+        });
+        });
 });
