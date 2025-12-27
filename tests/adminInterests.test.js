@@ -2,7 +2,7 @@ const request = require('supertest');
 const app = require('../server');
 const Interest = require('../models/Interest');
 const InterestCategory = require('../models/InterestCategory');
-const AdminUser = require('../models/AdminUser'); 
+const AdminUser = require('../models/AdminUser');
 const { createSuperAdmin, createAdmin, createInterestCategory, createInterest } = require('./helpers/factories');
 const mongoose = require('mongoose');
 
@@ -10,6 +10,8 @@ describe('Admin Interests API', () => {
     let superadminToken;
     let adminToken;
     let testCategory;
+
+    const rand = () => new mongoose.Types.ObjectId().toString().slice(-6);
 
     beforeAll(async () => {
         await mongoose.connection.collection('adminusers').deleteMany({});
@@ -22,7 +24,7 @@ describe('Admin Interests API', () => {
         superadminToken = res.body.token;
 
         const admin = await createAdmin({ username: 'interestAdmin' });
-        res = await request(app).post('/api/admin/auth/login').send({ username: 'interestAdmin', password: 'superStrongPassword123!' }); 
+        res = await request(app).post('/api/admin/auth/login').send({ username: 'interestAdmin', password: 'superStrongPassword123!' });
         adminToken = res.body.token;
 
         testCategory = await createInterestCategory({ name: 'General Tech' });
@@ -41,7 +43,7 @@ describe('Admin Interests API', () => {
             const newCategoryData = { name: 'Science Fiction Books', description: 'Books about future and space.' };
             const res = await request(app)
                 .post('/api/admin/interests/categories')
-                .set('Authorization', `Bearer ${adminToken}`) 
+                .set('Authorization', `Bearer ${adminToken}`)
                 .send(newCategoryData);
             expect(res.statusCode).toEqual(201);
             expect(res.body.name).toBe(newCategoryData.name);
@@ -62,7 +64,7 @@ describe('Admin Interests API', () => {
                 .set('Authorization', `Bearer ${adminToken}`);
             expect(res.statusCode).toEqual(200);
             expect(res.body).toBeInstanceOf(Array);
-            expect(res.body.length).toBeGreaterThanOrEqual(2); 
+            expect(res.body.length).toBeGreaterThanOrEqual(2);
             expect(res.body.some(cat => cat.name === 'General Tech')).toBe(true);
         });
 
@@ -88,22 +90,21 @@ describe('Admin Interests API', () => {
             expect(deletedCat).toBeNull();
         });
 
-        it('should prevent deleting a category if it has active interests (implement this logic in controller)', async () => {
-            await createInterest({ name: 'Test Interest In Category', category: testCategory }); 
+        it('should prevent deleting a category if it has active interests', async () => {
+            await createInterest({ name: 'Test Interest In Category', category: testCategory });
             const res = await request(app)
                 .delete(`/api/admin/interests/categories/${testCategory._id}`)
                 .set('Authorization', `Bearer ${superadminToken}`);
             expect(res.statusCode).toEqual(400);
             expect(res.body.message).toContain('Cannot delete category. It still contains');
         });
-
     });
 
     describe('Interests - /api/admin/interests', () => {
         let interestToModify;
 
         beforeEach(async () => {
-            await Interest.deleteMany({ name: { $ne: 'SomePersistentInterest' }}); 
+            await Interest.deleteMany({ name: { $ne: 'SomePersistentInterest' }});
             interestToModify = await createInterest({ name: 'Interest To Modify', category: testCategory });
         });
 
@@ -136,7 +137,7 @@ describe('Admin Interests API', () => {
                 .get('/api/admin/interests')
                 .set('Authorization', `Bearer ${adminToken}`);
             expect(res.statusCode).toEqual(200);
-            expect(res.body.interests.length).toBe(1); 
+            expect(res.body.interests.length).toBe(1);
             expect(res.body.interests[0].isArchived).toBe(false);
         });
 
@@ -150,9 +151,8 @@ describe('Admin Interests API', () => {
             expect(res.body.interests.some(i => i.isArchived === true)).toBe(true);
         });
 
-
         it('should allow admin to update an interest (name, category, description, isArchived)', async () => {
-            const anotherCategory = await createInterestCategory({ name: uniqueCategoryName() });
+            const anotherCategory = await createInterestCategory({ name: `Another Cat ${rand()}` });
             const updateData = {
                 name: 'Super Updated Interest Name',
                 categoryId: anotherCategory._id.toString(),
@@ -172,7 +172,7 @@ describe('Admin Interests API', () => {
 
         it('should allow admin to archive an interest', async () => {
             const res = await request(app)
-                .delete(`/api/admin/interests/${interestToModify._id}`) 
+                .delete(`/api/admin/interests/${interestToModify._id}`)
                 .set('Authorization', `Bearer ${adminToken}`);
             expect(res.statusCode).toEqual(200);
             expect(res.body.message).toContain('archived successfully');
@@ -204,7 +204,7 @@ describe('Admin Interests API', () => {
         });
 
         it('should allow creating an interest with the same name but different category', async () => {
-            const anotherCategory = await createInterestCategory({name: uniqueCategoryName()});
+            const anotherCategory = await createInterestCategory({ name: `DiffCat ${rand()}` });
             const interestName = "SameNameDifferentCat";
             await createInterest({ name: interestName, category: testCategory });
 
@@ -232,6 +232,78 @@ describe('Admin Interests API', () => {
         });
     });
 
+    describe('i18n - Admin translation endpoints', () => {
+        let cat;
+        let intr;
 
+        beforeEach(async () => {
+            const suffix = rand();
+            cat = await createInterestCategory({ name: `Kategoria PL ${suffix}`, description: 'Opis PL' });
+            intr = await createInterest({ name: `Zainteresowanie PL ${suffix}`, category: cat, description: 'Opis zainteresowania PL' });
+        });
 
+        it('should allow admin to upsert category translation (PATCH .../categories/:id/translations/en)', async () => {
+            const res = await request(app)
+                .patch(`/api/admin/interests/categories/${cat._id}/translations/en`)
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ name: 'Category EN', description: 'EN desc' });
+
+            expect(res.statusCode).toBe(200);
+
+            // response może zawierać i18n jako obiekt
+            expect(res.body).toHaveProperty('i18n');
+            expect(res.body.i18n.en).toBeTruthy();
+            expect(res.body.i18n.en.name).toBe('Category EN');
+
+            const inDb = await InterestCategory.findById(cat._id).lean();
+            expect(inDb.i18n).toBeTruthy();
+            expect(inDb.i18n.en).toBeTruthy();
+            expect(inDb.i18n.en.name).toBe('Category EN');
+        });
+
+        it('should allow admin to upsert interest translation and public API should return it for lang=en', async () => {
+            // najpierw ustaw tłumaczenie kategorii, żeby public API mogło zwrócić Category EN
+            await request(app)
+                .patch(`/api/admin/interests/categories/${cat._id}/translations/en`)
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ name: 'Category EN', description: 'EN desc' });
+
+            const patchRes = await request(app)
+                .patch(`/api/admin/interests/${intr._id}/translations/en`)
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ name: 'Interest EN', description: 'EN interest desc' });
+
+            expect(patchRes.statusCode).toBe(200);
+            expect(patchRes.body).toHaveProperty('i18n');
+            expect(patchRes.body.i18n.en).toBeTruthy();
+            expect(patchRes.body.i18n.en.name).toBe('Interest EN');
+
+            const pubRes = await request(app)
+                .get(`/api/public/interests?categoryId=${cat._id}&lang=en`);
+
+            expect(pubRes.statusCode).toBe(200);
+            expect(pubRes.body.length).toBe(1);
+            expect(pubRes.body[0].name).toBe('Interest EN');
+            expect(pubRes.body[0].category.name).toBe('Category EN');
+        });
+
+        it('should return 400 for invalid language code', async () => {
+            const res = await request(app)
+                .patch(`/api/admin/interests/${intr._id}/translations/english`) // zły format
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ name: 'Interest EN' });
+
+            expect(res.statusCode).toBe(400);
+            expect(res.body).toHaveProperty('errors');
+        });
+
+        it('should return 400 if translation name is missing', async () => {
+            const res = await request(app)
+                .patch(`/api/admin/interests/${intr._id}/translations/en`)
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ description: 'Only desc' });
+
+            expect(res.statusCode).toBe(400);
+        });
+    });
 });

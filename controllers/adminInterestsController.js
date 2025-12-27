@@ -4,6 +4,10 @@ const UserInterest = require('../models/UserInterest');
 const { validationResult } = require('express-validator');
 const logAuditEvent = require('../utils/auditLogger');
 
+const { DEFAULT_LANG } = require('../config/i18n');
+const normalizeLang = (lang) => String(lang || '').trim().toLowerCase();
+
+
 const createInterestCategory = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
@@ -79,6 +83,95 @@ const deleteInterestCategory = async (req, res) => {
         next(error);
     }
 };
+
+const upsertInterestCategoryTranslation = async (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+  const { categoryId, lang } = req.params;
+  const language = normalizeLang(lang);
+  const { name, description } = req.body;
+
+  try {
+    const category = await InterestCategory.findById(categoryId);
+    if (!category) return res.status(404).json({ message: 'Interest category not found.' });
+
+    // Jeśli edytujesz domyślny język, aktualizuj też pola bazowe
+    if (language === DEFAULT_LANG) {
+      if (name) category.name = name;
+      if (description !== undefined) category.description = description;
+    } else {
+      if (!name) return res.status(400).json({ message: 'Translation name is required.' });
+
+      const current = category.i18n.get(language) || {};
+      category.i18n.set(language, {
+        name: name ?? current.name,
+        description: description ?? current.description ?? '',
+      });
+    }
+
+    const updated = await category.save();
+
+    await logAuditEvent(
+      'admin_upserted_interest_category_translation',
+      { type: 'admin', id: req.adminUser._id },
+      'admin_action',
+      { type: 'interest_category', id: updated._id },
+      { categoryId, lang: language },
+      req
+    );
+
+    res.json(updated);
+  } catch (error) {
+    console.error('[adminInterestsCtrl] Upsert Category Translation Error:', error);
+    next(error);
+  }
+};
+
+const upsertInterestTranslation = async (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+  const { interestId, lang } = req.params;
+  const language = normalizeLang(lang);
+  const { name, description } = req.body;
+
+  try {
+    const interest = await Interest.findById(interestId);
+    if (!interest) return res.status(404).json({ message: 'Interest not found.' });
+
+    if (language === DEFAULT_LANG) {
+      if (name) interest.name = name;
+      if (description !== undefined) interest.description = description;
+    } else {
+      if (!name) return res.status(400).json({ message: 'Translation name is required.' });
+
+      const current = interest.i18n.get(language) || {};
+      interest.i18n.set(language, {
+        name: name ?? current.name,
+        description: description ?? current.description ?? '',
+      });
+    }
+
+    const updated = await interest.save();
+
+    await logAuditEvent(
+      'admin_upserted_interest_translation',
+      { type: 'admin', id: req.adminUser._id },
+      'admin_action',
+      { type: 'interest', id: updated._id },
+      { interestId, lang: language },
+      req
+    );
+
+    const populated = await Interest.findById(updated._id).populate('category', 'name i18n');
+    res.json(populated);
+  } catch (error) {
+    console.error('[adminInterestsCtrl] Upsert Interest Translation Error:', error);
+    next(error);
+  }
+};
+
 
 
 // --- Interest Management ---
@@ -253,6 +346,8 @@ module.exports = {
     getAllInterestCategories,
     updateInterestCategory,
     deleteInterestCategory,
+    upsertInterestCategoryTranslation,
+    upsertInterestTranslation,
     createInterest,
     getAllInterestsAdmin,
     updateInterest,

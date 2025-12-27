@@ -2,8 +2,8 @@ const express = require('express');
 const { body, param, query } = require('express-validator');
 const mongoose = require('mongoose');
 const {
-    createInterestCategory, getAllInterestCategories, updateInterestCategory, deleteInterestCategory,
-    createInterest, getAllInterestsAdmin, updateInterest, archiveInterest, restoreInterest
+    createInterestCategory, getAllInterestCategories, updateInterestCategory, deleteInterestCategory,upsertInterestCategoryTranslation,
+upsertInterestTranslation, createInterest, getAllInterestsAdmin, updateInterest, archiveInterest, restoreInterest
 } = require('../controllers/adminInterestsController');
 const { protectAdmin, authorizeAdminRole } = require('../middleware/adminAuthMiddleware');
 
@@ -12,6 +12,13 @@ router.use(protectAdmin);
 
 const categoryIdValidation = [param('categoryId').isMongoId().withMessage('Invalid Category ID format.')];
 const interestIdValidation = [param('interestId').isMongoId().withMessage('Invalid Interest ID format.')];
+const langValidation = [
+  param('lang')
+    .trim()
+    .matches(/^[a-z]{2,3}(-[a-z]{2})?$/i)
+    .withMessage('Invalid language code. Example: en, de, en-us'),
+];
+
 
 router.route('/categories')
     .post(authorizeAdminRole(['admin', 'superadmin']), [
@@ -57,5 +64,29 @@ router.route('/:interestId')
     .delete(authorizeAdminRole(['admin', 'superadmin']), interestIdValidation, archiveInterest);
 
 router.put('/:interestId/restore', authorizeAdminRole(['admin', 'superadmin']), interestIdValidation, restoreInterest);
+
+router.patch(
+  '/categories/:categoryId/translations/:lang',
+  authorizeAdminRole(['admin', 'superadmin']),
+  [
+    ...categoryIdValidation,
+    ...langValidation,
+    body('name').trim().notEmpty().withMessage('Translation name is required.').isLength({ min: 1, max: 100 }).escape(),
+    body('description').optional({ checkFalsy: true }).trim().isLength({ max: 500 }).escape(),
+  ],
+  upsertInterestCategoryTranslation
+);
+
+router.patch(
+  '/:interestId/translations/:lang',
+  authorizeAdminRole(['admin', 'superadmin']),
+  [
+    ...interestIdValidation,
+    ...langValidation,
+    body('name').trim().notEmpty().withMessage('Translation name is required.').isLength({ min: 1, max: 100 }).escape(),
+    body('description').optional({ checkFalsy: true }).trim().isLength({ max: 500 }).escape(),
+  ],
+  upsertInterestTranslation
+);
 
 module.exports = router;
