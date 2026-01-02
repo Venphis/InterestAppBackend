@@ -11,7 +11,7 @@ const chatIdValidation = [param('chatId').isMongoId().withMessage('Invalid Chat 
 
 router.post('/', [
     body('chatId').isMongoId().withMessage('Chat ID is required and must be valid.'),
-    body('content').isString().notEmpty.withMessage('Content must be a non-empty String.'),
+    body('content').isString().notEmpty().withMessage('Content must be a non-empty String.'),
 ], sendMessage);
 
 router.get('/:chatId', [
