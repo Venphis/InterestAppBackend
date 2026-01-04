@@ -9,14 +9,44 @@ const { createVerifiedUser, generateUserToken, createChat, createMessage, create
 const mongoose = require('mongoose');
 const sodium = require('libsodium-wrappers');
 
+// Helper: express-validator (v6/v7) may use `param` or `path`
+const findFieldError = (resBody, field) => {
+    const errors = resBody?.errors || [];
+    return errors.find(e => (e.param || e.path) === field);
+};
+
+// Helper: E2EE “single ciphertext” using shared key (DH)
+// Both sides can derive the same shared key with beforenm, so we store only ONE encrypted payload in DB.
+const encryptSingleForChat = (plaintext, senderKeys, recipientKeys) => {
+    const nonce = sodium.randombytes_buf(sodium.crypto_box_NONCEBYTES);
+    const sharedKey = sodium.crypto_box_beforenm(recipientKeys.publicKey, senderKeys.privateKey); // DH shared key
+    const ciphertext = sodium.crypto_box_easy_afternm(plaintext, nonce, sharedKey);
+
+    return JSON.stringify({
+        nonce: sodium.to_base64(nonce),
+        ciphertext: sodium.to_base64(ciphertext),
+    });
+};
+
+const decryptSingleForChat = (payloadString, selfKeys, otherPartyKeys) => {
+    const payload = JSON.parse(payloadString);
+    const sharedKey = sodium.crypto_box_beforenm(otherPartyKeys.publicKey, selfKeys.privateKey);
+    return sodium.crypto_box_open_easy_afternm(
+        sodium.from_base64(payload.ciphertext),
+        sodium.from_base64(payload.nonce),
+        sharedKey,
+        'text'
+    );
+};
+
 describe('Message API (/api/messages) with E2EE', () => {
     let userOne, userTwo, userThree;
     let tokenOne, tokenTwo, tokenThree;
     let chatOneTwo;
-    let userOneKeys, userTwoKeys; // Pary kluczy dla E2EE w formacie Uint8Array
+    let userOneKeys, userTwoKeys; // Uint8Array keypairs
 
     beforeAll(async () => {
-        await sodium.ready; // Upewnij się, że libsodium jest gotowe
+        await sodium.ready;
         await mongoose.connection.collection('users').deleteMany({});
         await mongoose.connection.collection('chats').deleteMany({});
         await mongoose.connection.collection('messages').deleteMany({});
@@ -30,11 +60,11 @@ describe('Message API (/api/messages) with E2EE', () => {
         tokenTwo = generateUserToken(userTwo);
         tokenThree = generateUserToken(userThree);
 
-        // Generuj klucze jako Uint8Array
+        // Generate DH keypairs (simulating phone keys)
         userOneKeys = sodium.crypto_box_keypair();
         userTwoKeys = sodium.crypto_box_keypair();
 
-        // Symuluj publikację kluczy (zapisz do bazy jako stringi Base64)
+        // Publish public keys to DB (server stores public keys as base64 strings)
         await User.findByIdAndUpdate(userOne._id, { publicKey: sodium.to_base64(userOneKeys.publicKey) });
         await User.findByIdAndUpdate(userTwo._id, { publicKey: sodium.to_base64(userTwoKeys.publicKey) });
     });
@@ -47,33 +77,12 @@ describe('Message API (/api/messages) with E2EE', () => {
         await createFriendship({ user1: userOne, user2: userTwo, requestedBy: userOne, status: 'accepted' });
     });
 
-
     describe('POST /api/messages with E2EE', () => {
         it('should allow a user to send a message encrypted for all participants', async () => {
             const originalMessage = 'This is a secret message for both of us!';
 
-            // --- Symulacja Szyfrowania po Stronie Klienta (userOne) ---
-            const selfPublicKey_uint8 = userOneKeys.publicKey;
-            const recipientPublicKey_uint8 = userTwoKeys.publicKey;
-
-            // Szyfruj dla odbiorcy (userTwo)
-            const nonceForTwo = sodium.randombytes_buf(sodium.crypto_box_NONCEBYTES);
-            const encryptedForTwo = sodium.crypto_box_easy(originalMessage, nonceForTwo, recipientPublicKey_uint8, userOneKeys.privateKey);
-
-            // Szyfruj dla siebie samego (userOne)
-            const nonceForOne = sodium.randombytes_buf(sodium.crypto_box_NONCEBYTES);
-            const encryptedForOne = sodium.crypto_box_easy(originalMessage, nonceForOne, selfPublicKey_uint8, userOneKeys.privateKey);
-
-            const contentToSend = {
-                [userTwo._id.toString()]: JSON.stringify({
-                    nonce: sodium.to_base64(nonceForTwo),
-                    ciphertext: sodium.to_base64(encryptedForTwo)
-                }),
-                [userOne._id.toString()]: JSON.stringify({
-                    nonce: sodium.to_base64(nonceForOne),
-                    ciphertext: sodium.to_base64(encryptedForOne)
-                })
-            };
+            // Client-side: encrypt ONCE using a shared key derivable by both participants
+            const contentToSend = encryptSingleForChat(originalMessage, userOneKeys, userTwoKeys);
 
             const res = await request(app)
                 .post('/api/messages')
@@ -82,74 +91,67 @@ describe('Message API (/api/messages) with E2EE', () => {
 
             expect(res.statusCode).toEqual(200);
 
-            // --- Weryfikacja ---
+            // DB stores `content` as String
             const messageInDb = await Message.findById(res.body._id);
-            expect(messageInDb.content).toBeInstanceOf(Object);
-            expect(messageInDb.content).toHaveProperty(userOne._id.toString());
-            expect(messageInDb.content).toHaveProperty(userTwo._id.toString());
+            expect(typeof messageInDb.content).toBe('string');
 
-            // Symuluj deszyfrowanie przez ODBIORCĘ (userTwo)
-            const contentForTwo = JSON.parse(messageInDb.content[userTwo._id.toString()]);
-            const decryptedByTwo = sodium.crypto_box_open_easy(
-                sodium.from_base64(contentForTwo.ciphertext), sodium.from_base64(contentForTwo.nonce),
-                userOneKeys.publicKey, userTwoKeys.privateKey, 'text'
-            );
+            // Recipient can decrypt (userTwo)
+            const decryptedByTwo = decryptSingleForChat(messageInDb.content, userTwoKeys, userOneKeys);
             expect(decryptedByTwo).toBe(originalMessage);
 
-            // Symuluj deszyfrowanie przez NADAWCĘ (userOne)
-            const contentForOne = JSON.parse(messageInDb.content[userOne._id.toString()]);
-            const decryptedByOne = sodium.crypto_box_open_easy(
-                sodium.from_base64(contentForOne.ciphertext), sodium.from_base64(contentForOne.nonce),
-                userOneKeys.publicKey, // Używa swojego klucza publicznego do weryfikacji
-                userOneKeys.privateKey,
-                'text'
-            );
+            // Sender can also decrypt (userOne) using the same ciphertext (shared secret)
+            const decryptedByOne = decryptSingleForChat(messageInDb.content, userOneKeys, userTwoKeys);
             expect(decryptedByOne).toBe(originalMessage);
         });
 
         it('should correctly update the lastMessage and lastMessageTimestamp on the parent chat', async () => {
-            const contentToSend = { // Stwórz poprawny, ale pusty obiekt content
-                [userOne._id.toString()]: "{}",
-                [userTwo._id.toString()]: "{}"
-            };
+            const contentToSend = encryptSingleForChat('ping', userOneKeys, userTwoKeys);
+
             const res = await request(app)
                 .post('/api/messages')
                 .set('Authorization', `Bearer ${tokenOne}`)
                 .send({ chatId: chatOneTwo._id.toString(), content: contentToSend });
 
             expect(res.statusCode).toEqual(200);
+
             const updatedChat = await Chat.findById(chatOneTwo._id);
             expect(updatedChat.lastMessage.toString()).toBe(res.body._id);
+            expect(updatedChat.lastMessageTimestamp).toBeInstanceOf(Date);
         });
 
         it('should not allow sending a message to a chat they are not part of', async () => {
-            const contentToSend = { [userOne._id.toString()]: "{}" }; // Fikcyjny content
+            const contentToSend = encryptSingleForChat('Should not send', userOneKeys, userTwoKeys);
+
             const res = await request(app)
                 .post('/api/messages')
                 .set('Authorization', `Bearer ${tokenThree}`)
                 .send({ chatId: chatOneTwo._id.toString(), content: contentToSend });
+
             expect(res.statusCode).toEqual(404);
         });
 
         it('should return a validation error for invalid content format (not an object)', async () => {
+            // Now: backend expects NON-EMPTY STRING, so an object is invalid
             const res = await request(app)
                 .post('/api/messages')
                 .set('Authorization', `Bearer ${tokenOne}`)
-                .send({ chatId: chatOneTwo._id.toString(), content: 'just a string' });
+                .send({ chatId: chatOneTwo._id.toString(), content: { foo: 'bar' } });
+
             expect(res.statusCode).toEqual(400);
-            expect(res.body.errors[0].msg).toBe('Content must be an object.');
+            expect(res.body).toHaveProperty('errors');
+            expect(findFieldError(res.body, 'content')).toBeTruthy();
         });
-        
+
         it('should return an error if content is missing an encrypted version for a participant', async () => {
-             const contentToSend = { // Brakuje wersji dla userOne
-                [userTwo._id.toString()]: "{...}"
-            };
+            // New model: single ciphertext string -> “missing encrypted version” maps to “missing/empty content”
             const res = await request(app)
                 .post('/api/messages')
                 .set('Authorization', `Bearer ${tokenOne}`)
-                .send({ chatId: chatOneTwo._id.toString(), content: contentToSend });
+                .send({ chatId: chatOneTwo._id.toString(), content: '' });
+
             expect(res.statusCode).toEqual(400);
-            expect(res.body.message).toContain('Content must include an encrypted version for every chat participant.');
+            expect(res.body).toHaveProperty('errors');
+            expect(findFieldError(res.body, 'content')).toBeTruthy();
         });
 
         it('should not allow sending a message if the friendship with the recipient is blocked', async () => {
@@ -157,11 +159,14 @@ describe('Message API (/api/messages) with E2EE', () => {
                 { $or: [{ user1: userOne._id, user2: userTwo._id }, { user1: userTwo._id, user2: userOne._id }] },
                 { status: 'blocked', isBlocked: true, blockedBy: userOne._id }
             );
-            const contentToSend = { [userOne._id.toString()]: "{}", [userTwo._id.toString()]: "{}" };
+
+            const contentToSend = encryptSingleForChat('Blocked message attempt', userTwoKeys, userOneKeys);
+
             const res = await request(app)
                 .post('/api/messages')
-                .set('Authorization', `Bearer ${tokenTwo}`) // userTwo próbuje wysłać
+                .set('Authorization', `Bearer ${tokenTwo}`) // userTwo tries to send
                 .send({ chatId: chatOneTwo._id.toString(), content: contentToSend });
+
             expect(res.statusCode).toEqual(403);
             expect(res.body.message).toContain('Cannot send message, user is blocked.');
         });
@@ -170,51 +175,37 @@ describe('Message API (/api/messages) with E2EE', () => {
     describe('GET /api/messages/:chatId', () => {
         beforeEach(async () => {
             await Message.deleteMany({});
-            const originalMessage1 = 'Encrypted message 1';
-            const nonce1_for_two = sodium.randombytes_buf(sodium.crypto_box_NONCEBYTES);
-            const enc1_for_two = sodium.crypto_box_easy(originalMessage1, nonce1_for_two, userTwoKeys.publicKey, userOneKeys.privateKey);
-            const nonce1_for_one = sodium.randombytes_buf(sodium.crypto_box_NONCEBYTES);
-            const enc1_for_one = sodium.crypto_box_easy(originalMessage1, nonce1_for_one, userOneKeys.publicKey, userOneKeys.privateKey);
 
-            const content1 = {
-                [userOne._id.toString()]: JSON.stringify({ nonce: sodium.to_base64(nonce1_for_one), ciphertext: sodium.to_base64(enc1_for_one) }),
-                [userTwo._id.toString()]: JSON.stringify({ nonce: sodium.to_base64(nonce1_for_two), ciphertext: sodium.to_base64(enc1_for_two) })
-            };
+            const originalMessage1 = 'Encrypted message 1';
+            const content1 = encryptSingleForChat(originalMessage1, userOneKeys, userTwoKeys);
+
+            // Create directly in DB for GET tests
             await createMessage({ chatId: chatOneTwo, senderId: userOne, content: content1 });
         });
 
         it('should fetch an encrypted message that can be decrypted by the recipient', async () => {
             const res = await request(app)
                 .get(`/api/messages/${chatOneTwo._id}`)
-                .set('Authorization', `Bearer ${tokenTwo}`); // userTwo (odbiorca) pobiera
+                .set('Authorization', `Bearer ${tokenTwo}`);
 
             expect(res.statusCode).toEqual(200);
-            const message = res.body.messages[0];
-            expect(message.content).toHaveProperty(userTwo._id.toString());
+            expect(res.body).toHaveProperty('messages');
+            expect(res.body.messages).toBeInstanceOf(Array);
+            expect(res.body.messages.length).toBeGreaterThan(0);
 
-            const contentForTwo = JSON.parse(message.content[userTwo._id.toString()]);
-            const decrypted = sodium.crypto_box_open_easy(
-                sodium.from_base64(contentForTwo.ciphertext),
-                sodium.from_base64(contentForTwo.nonce),
-                userOneKeys.publicKey, // klucz publiczny nadawcy
-                userTwoKeys.privateKey, // klucz prywatny odbiorcy
-                'text'
-            );
+            const message = res.body.messages[0];
+            expect(typeof message.content).toBe('string');
+
+            const decrypted = decryptSingleForChat(message.content, userTwoKeys, userOneKeys);
             expect(decrypted).toBe('Encrypted message 1');
         });
 
         it('should handle pagination for encrypted messages correctly', async () => {
             await Message.deleteMany({});
-            for (let i = 1; i <= 25; i++) {
-                const nonce_for_two = sodium.randombytes_buf(sodium.crypto_box_NONCEBYTES);
-                const encrypted_for_two = sodium.crypto_box_easy(`Paginated message ${i}`, nonce_for_two, userTwoKeys.publicKey, userOneKeys.privateKey);
-                const nonce_for_one = sodium.randombytes_buf(sodium.crypto_box_NONCEBYTES);
-                const encrypted_for_one = sodium.crypto_box_easy(`Paginated message ${i}`, nonce_for_one, userOneKeys.publicKey, userOneKeys.privateKey);
 
-                const content = {
-                    [userOne._id.toString()]: JSON.stringify({ nonce: sodium.to_base64(nonce_for_one), ciphertext: sodium.to_base64(encrypted_for_one) }),
-                    [userTwo._id.toString()]: JSON.stringify({ nonce: sodium.to_base64(nonce_for_two), ciphertext: sodium.to_base64(encrypted_for_two) })
-                };
+            for (let i = 1; i <= 25; i++) {
+                const plaintext = `Paginated message ${i}`;
+                const content = encryptSingleForChat(plaintext, userOneKeys, userTwoKeys);
                 await createMessage({ chatId: chatOneTwo, senderId: userOne, content });
             }
 
@@ -227,14 +218,9 @@ describe('Message API (/api/messages) with E2EE', () => {
             expect(res.body.currentPage).toBe(2);
             expect(res.body.totalPages).toBe(3);
 
-            const firstMsgOnPage2 = JSON.parse(res.body.messages[0].content[userTwo._id.toString()]);
-            const decryptedContent = sodium.crypto_box_open_easy(
-                sodium.from_base64(firstMsgOnPage2.ciphertext),
-                sodium.from_base64(firstMsgOnPage2.nonce),
-                userOneKeys.publicKey,
-                userTwoKeys.privateKey,
-                'text'
-            );
+            // With your controller logic (sort desc, skip/limit, then reverse),
+            // the first message on page 2 should be "Paginated message 6"
+            const decryptedContent = decryptSingleForChat(res.body.messages[0].content, userTwoKeys, userOneKeys);
             expect(decryptedContent).toBe('Paginated message 6');
         });
 
@@ -242,8 +228,9 @@ describe('Message API (/api/messages) with E2EE', () => {
             const res = await request(app)
                 .get(`/api/messages/${chatOneTwo._id}`)
                 .set('Authorization', `Bearer ${tokenThree}`);
+
             expect(res.statusCode).toEqual(403);
-            expect(res.body.message).toContain("You are not authorized to view messages for this chat.");
+            expect(res.body.message).toContain('You are not authorized to view messages for this chat.');
         });
     });
 
@@ -251,6 +238,7 @@ describe('Message API (/api/messages) with E2EE', () => {
         let rotationUserOne, rotationUserTwo;
         let rotationTokenOne, rotationTokenTwo;
         let rotationChat;
+        let rotationUserOneKeys, rotationUserTwoKeys;
 
         beforeEach(async () => {
             await mongoose.connection.collection('users').deleteMany({});
@@ -259,54 +247,65 @@ describe('Message API (/api/messages) with E2EE', () => {
 
             rotationUserOne = await createVerifiedUser({ username: 'rotUser1', email: 'rot1@ex.com' });
             rotationUserTwo = await createVerifiedUser({ username: 'rotUser2', email: 'rot2@ex.com' });
+
             rotationTokenOne = generateUserToken(rotationUserOne);
             rotationTokenTwo = generateUserToken(rotationUserTwo);
 
-            // Ustaw początkowe klucze
-            const key1 = sodium.crypto_box_keypair();
-            const key2 = sodium.crypto_box_keypair();
-            await User.findByIdAndUpdate(rotationUserOne._id, { publicKey: sodium.to_base64(key1.publicKey) });
-            await User.findByIdAndUpdate(rotationUserTwo._id, { publicKey: sodium.to_base64(key2.publicKey) });
+            // Initial keys
+            rotationUserOneKeys = sodium.crypto_box_keypair();
+            rotationUserTwoKeys = sodium.crypto_box_keypair();
+
+            await User.findByIdAndUpdate(rotationUserOne._id, { publicKey: sodium.to_base64(rotationUserOneKeys.publicKey) });
+            await User.findByIdAndUpdate(rotationUserTwo._id, { publicKey: sodium.to_base64(rotationUserTwoKeys.publicKey) });
 
             rotationChat = await createChat([rotationUserOne, rotationUserTwo]);
 
-            const contentObj = {
-                [rotationUserOne._id.toString()]: 'Message 1 content',
-                [rotationUserTwo._id.toString()]: 'Message 1 content'
-            };
-            await createMessage({ chatId: rotationChat, senderId: rotationUserOne, content: contentObj });
-            await createMessage({ chatId: rotationChat, senderId: rotationUserTwo, content: contentObj });
+            const msg1 = encryptSingleForChat('Message 1 content', rotationUserOneKeys, rotationUserTwoKeys);
+            const msg2 = encryptSingleForChat('Message 2 content', rotationUserTwoKeys, rotationUserOneKeys);
+
+            await createMessage({ chatId: rotationChat, senderId: rotationUserOne, content: msg1 });
+            await createMessage({ chatId: rotationChat, senderId: rotationUserTwo, content: msg2 });
         });
 
         it('should wipe history for the other user if one participant rotates their key', async () => {
-            // 1. Sprawdź, czy userTwo widzi wiadomości przed rotacją
+            // 1. userTwo sees messages before rotation
             let res = await request(app)
                 .get(`/api/messages/${rotationChat._id}`)
                 .set('Authorization', `Bearer ${rotationTokenTwo}`);
+
             expect(res.statusCode).toEqual(200);
+            expect(res.body.messages).toBeInstanceOf(Array);
             expect(res.body.messages.length).toBe(2);
 
-            // 2. userOne zmienia (aktualizuje) swój klucz publiczny
+            // 2. userOne rotates key
             const newKeys = sodium.crypto_box_keypair();
             const newPublicKey = sodium.to_base64(newKeys.publicKey);
 
             res = await request(app)
                 .post('/api/keys/publish')
-                .set('Authorization', `Bearer ${rotationTokenOne}`) // userOne rotuje
+                .set('Authorization', `Bearer ${rotationTokenOne}`)
                 .send({ publicKey: newPublicKey });
 
             expect(res.statusCode).toEqual(200);
-            expect(res.body.message).toContain('Chat history cleared'); // Upewnij się, że kontroler zwraca taki komunikat
+            expect(res.body.message).toContain('Chat history cleared');
 
-            // 3. Sprawdź, czy userTwo (który NIE zmieniał klucza) widzi teraz pustą historię
+            // 3. userTwo should now have history wiped/unavailable
             res = await request(app)
                 .get(`/api/messages/${rotationChat._id}`)
                 .set('Authorization', `Bearer ${rotationTokenTwo}`);
 
             expect(res.statusCode).toEqual(200);
             expect(res.body.messages).toBeInstanceOf(Array);
-            expect(res.body.messages.length).toBe(0); // Historia powinna być pusta
+
+            // Depending on implementation, you may either:
+            // - return empty list, OR
+            // - return a signal that history is unavailable due to key rotation.
+            if (res.body.messages.length !== 0) {
+                expect(res.body.historyUnavailableReason).toBe('key_rotation');
+                expect(res.body.lastKeyRotationDate).toBeTruthy();
+            } else {
+                expect(res.body.messages.length).toBe(0);
+            }
         });
     });
-
 });

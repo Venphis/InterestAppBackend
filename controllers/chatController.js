@@ -129,7 +129,7 @@ const sendMessage = async (req, res, next) => {
 const allMessages = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-    
+
     try {
         // 1. Sprawdź dostęp do czatu
         const chat = await Chat.findOne({ _id: req.params.chatId, participants: req.user._id });
@@ -137,56 +137,63 @@ const allMessages = async (req, res, next) => {
             return res.status(403).json({ message: "You are not authorized to view messages for this chat." });
         }
 
-        const limit = parseInt(req.query.limit) || 20; 
-        const page = parseInt(req.query.page) || 1;  
+        const limit = parseInt(req.query.limit) || 20;
+        const page = parseInt(req.query.page) || 1;
         const skip = (page - 1) * limit;
 
-        // 2. Pobierz aktualnego użytkownika, aby sprawdzić datę rotacji klucza
+        // 2. Pobierz aktualnego użytkownika (rotacja klucza może ucinać historię)
         const currentUser = await User.findById(req.user._id);
 
-        // 3. Pobierz wiadomości (tylko te, które mają content dla usera)
-        const totalMessages = await Message.countDocuments({ 
-            chatId: req.params.chatId,
-            [`content.${req.user._id}`]: { $exists: true } 
-        });
+        // --- WYLICZ "CUT-OFF" DLA HISTORII ---
+        // Jeśli masz chat.lastResetDate (np. globalny reset czatu) i/lub currentUser.lastKeyRotationDate,
+        // to wiadomości starsze niż ta data są dla tego usera "niedostępne" (nie do odszyfrowania).
+        const candidateDates = [];
+        if (chat.lastResetDate) candidateDates.push(new Date(chat.lastResetDate));
+        if (currentUser?.lastKeyRotationDate) candidateDates.push(new Date(currentUser.lastKeyRotationDate));
 
-        const messages = await Message.find({
-                chatId: req.params.chatId,
-                [`content.${req.user._id}`]: { $exists: true } 
-            })
-            .sort({ createdAt: -1 }) 
+        const effectiveCutoffDate =
+            candidateDates.length > 0
+                ? new Date(Math.max(...candidateDates.map(d => d.getTime())))
+                : null;
+
+        // 3. Pobierz wiadomości (content jest String — nie filtrujemy po `content.<userId>`)
+        const baseQuery = { chatId: req.params.chatId };
+        if (effectiveCutoffDate) {
+            baseQuery.createdAt = { $gte: effectiveCutoffDate };
+        }
+
+        const totalMessages = await Message.countDocuments(baseQuery);
+
+        const messages = await Message.find(baseQuery)
+            .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit)
             .select('-__v');
 
-        // 4. NOWOŚĆ: Sprawdź "dziurę" w historii
+        // 4. Sprawdź, czy jest "dziura" w historii (były starsze wiadomości, ale są ucięte)
         let historyTruncated = false;
-        if (currentUser.lastKeyRotationDate) {
-             // Sprawdź, czy istnieją w tym czacie jakiekolwiek wiadomości starsze niż data zmiany klucza
-             // (nawet te "wyczyszczone", czyli bez content.userId)
-             const olderMessagesCount = await Message.countDocuments({
+        if (effectiveCutoffDate) {
+            const olderMessagesCount = await Message.countDocuments({
                 chatId: req.params.chatId,
-                createdAt: { $lt: currentUser.lastKeyRotationDate }
-             });
-             
-             // Jeśli są stare wiadomości, ale my ich nie widzimy (bo zostały wyczyszczone z naszego contentu), to jest dziura
-             if (olderMessagesCount > 0) {
-                 historyTruncated = true;
-             }
+                createdAt: { $lt: effectiveCutoffDate }
+            });
+            historyTruncated = olderMessagesCount > 0;
         }
 
-        // 5. Zwróć odpowiedź z nowymi polami
+        // 5. Odpowiedź
         res.json({
-            messages: messages.reverse(), 
+            messages: messages.reverse(),
             currentPage: page,
             totalPages: Math.ceil(totalMessages / limit),
             totalMessages,
-            // --- NOWE POLA DLA FRONTENDU ---
-            historyUnavailableReason: historyTruncated ? 'key_rotation' : null,
-            lastKeyRotationDate: currentUser.lastKeyRotationDate
-            // -------------------------------
-        });
 
+            historyUnavailableReason: historyTruncated ? 'key_rotation' : null,
+            lastKeyRotationDate: currentUser?.lastKeyRotationDate || null,
+
+            // opcjonalnie (nie szkodzi, pomaga frontendowi/debugowi):
+            lastResetDate: chat.lastResetDate || null,
+            effectiveHistoryStartDate: effectiveCutoffDate
+        });
     } catch (error) {
         console.error('[chatCtrl] Fetch Messages Error:', error);
         next(error);

@@ -109,12 +109,17 @@ exports.createChat = async (participantsArray) => {
 };
 
 exports.createMessage = async ({ chatId, senderId, content, overrides = {} }) => {
-    const defaults = {
-        chatId: chatId._id || chatId,
-        senderId: senderId._id || senderId,
-        content: content || generateUnique('Test message content '),
-    };
-    return Message.create({ ...defaults, ...overrides });
+  let finalContent = content ?? generateUnique('Test message content ');
+  if (finalContent && typeof finalContent === 'object') {
+    finalContent = JSON.stringify(finalContent);
+  }
+
+  const defaults = {
+    chatId: chatId._id || chatId,
+    senderId: senderId._id || senderId,
+    content: finalContent,
+  };
+  return Message.create({ ...defaults, ...overrides });
 };
 
 exports.createInterestCategory = async (overrides = {}) => {
