@@ -1,63 +1,68 @@
 const jwt = require('jsonwebtoken');
 const AdminUser = require('../models/AdminUser');
 
+// Authenticates admin requests: validates JWT, token type, and account status
 const protectAdmin = async (req, res, next) => {
-    if (
-        !req.headers.authorization ||
-        !req.headers.authorization.startsWith('Bearer ') 
-    ) {
-        return res
-            .status(401)
-            .json({ message: 'Not authorized, no admin token or malformed header' }); 
-    }
-
-    const token = req.headers.authorization.split(' ')[1];
-
-    if (!token) {
-        return res.status(401).json({ message: 'Not authorized, no admin token provided' });
+    if (!req.headers.authorization || !req.headers.authorization.startsWith('Bearer ')) {
+        return res.status(401).json({ message: 'Not authorized, no token provided' });
     }
 
     try {
-        const secretToUse = process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET;
+        const token = req.headers.authorization.split(' ')[1];
+        
+        // Use admin secret, falling back to main secret (validated at startup)
+        const secret = process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET;
+        
+        const decoded = jwt.verify(token, secret);
 
-        if (typeof secretToUse !== 'string' || secretToUse.length < 16) {
-            console.error('[AdminAuthMiddleware] JWT_ADMIN_SECRET is invalid or too short:', secretToUse);
-            return res.status(500).json({ message: 'Internal server error: JWT admin secret misconfiguration.' });
-        }
-
-        const decoded = jwt.verify(token, secretToUse);
-
+        // Security Check: Prevent regular user tokens from accessing admin routes
         if (decoded.type !== 'admin') {
-            return res.status(401).json({ message: 'token is not an admin token' });
+            return res.status(403).json({ message: 'Access denied: Token is not an admin token' });
         }
 
         const admin = await AdminUser.findById(decoded.id).select('-password');
-        if (!admin || !admin.isActive) {
-            return res.status(401).json({ message: 'Not authorized, admin not found or inactive' });
+
+        if (!admin) {
+            return res.status(401).json({ message: 'Not authorized, admin user not found' });
         }
+
+        if (!admin.isActive) {
+            return res.status(403).json({ message: 'Access denied: Admin account is inactive' });
+        }
+
         req.adminUser = admin;
         next();
+
     } catch (error) {
-        if (error instanceof jwt.JsonWebTokenError) {
-            return res.status(401).json({ message: `Not authorized, admin token error: ${error.message}` });
+        if (process.env.NODE_ENV !== 'test') {
+            console.error('[AdminAuth] Verification failed:', error.message);
         }
-        return res.status(500).json({ message: 'Not authorized, server error during admin token processing' });
+
+        if (error instanceof jwt.TokenExpiredError) {
+            return res.status(401).json({ message: 'Not authorized, token expired' });
+        }
+        
+        return res.status(401).json({ message: 'Not authorized, invalid token' });
     }
 };
 
+// Closure middleware to restrict access based on specific admin roles
 const authorizeAdminRole = (roles) => {
     return (req, res, next) => {
+        // Dependency check: protectAdmin must run first
         if (!req.adminUser || !req.adminUser.role) {
-            return res.status(403).json({ message: 'Not authorized, admin role not found in request' });
+            return res.status(403).json({ message: 'Access denied: User context missing' });
         }
+
         const allowedRoles = Array.isArray(roles) ? roles : [roles];
+
         if (!allowedRoles.includes(req.adminUser.role)) {
-          return res.status(403).json({
-            message: `Admin role '${req.adminUser.role}' is not authorized to access this route. Required: ${allowedRoles.join(' or ')}.`
-          });
+            return res.status(403).json({
+                message: `Access denied. Required role: ${allowedRoles.join(' or ')}`
+            });
         }
         next();
-      };
+    };
 };
 
 module.exports = { protectAdmin, authorizeAdminRole };

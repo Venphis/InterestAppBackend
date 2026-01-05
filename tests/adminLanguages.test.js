@@ -14,27 +14,25 @@ describe('Admin Languages API', () => {
 
   const rand = () => new mongoose.Types.ObjectId().toString().slice(-6);
 
-  // Idempotentny seed "pl" – dodaje tylko jeśli nie ma (nie dotyka innych języków)
-  const ensurePlExists = async () => {
-    await Language.updateOne(
-      { code: 'pl' },
-      {
-        $setOnInsert: {
-          code: 'pl',
-          name: 'Polski',
-          nativeName: 'Polski',
-          isArchived: false,
-        },
-      },
-      { upsert: true }
-    );
-  };
+  const ensureDefaultLanguagesExist = async () => {
+  await Language.updateOne(
+    { code: 'en' },
+    { $setOnInsert: { code: 'en', name: 'English', nativeName: 'English', isArchived: false } },
+    { upsert: true }
+  );
+
+  await Language.updateOne(
+    { code: 'pl' },
+    { $setOnInsert: { code: 'pl', name: 'Polski', nativeName: 'Polski', isArchived: false } },
+    { upsert: true }
+  );
+};
 
   beforeAll(async () => {
     // Czyścimy tylko testowe kody, nie całą kolekcję
     await Language.deleteMany({ code: { $in: ['en', 'en-us', 'de', 'xx', 'zz', 'qq'] } });
 
-    await ensurePlExists();
+    await ensureDefaultLanguagesExist();
 
     await mongoose.connection.collection('adminusers').deleteMany({});
 
@@ -53,18 +51,18 @@ describe('Admin Languages API', () => {
     adminToken = res.body.token;
   });
 
-  describe('Default language "pl"', () => {
-    it('should have Polish language (pl) present and should not allow duplicate code', async () => {
-      await ensurePlExists();
+  describe('Default language "en"', () => {
+    it('should have English language (en) present and should not allow duplicate code', async () => {
+      await ensureDefaultLanguagesExist();
 
-      const pl = await Language.findOne({ code: 'pl' }).lean();
-      expect(pl).toBeTruthy();
-      expect(pl.code).toBe('pl');
+      const en = await Language.findOne({ code: 'en' }).lean();
+      expect(en).toBeTruthy();
+      expect(en.code).toBe('en');
 
       const res = await request(app)
         .post('/api/admin/languages')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ code: 'pl', name: 'Polski 2', nativeName: 'Polski' });
+        .send({ code: 'en', name: 'English 2', nativeName: 'English' });
 
       expect([400, 409]).toContain(res.statusCode);
     });
@@ -72,7 +70,7 @@ describe('Admin Languages API', () => {
 
   describe('GET /api/admin/languages', () => {
     it('should list active (non-archived) languages', async () => {
-      await ensurePlExists();
+      await ensureDefaultLanguagesExist();
 
       await Language.deleteMany({ code: 'en' });
       await Language.create({ code: 'en', name: 'English', nativeName: 'English', isArchived: false });
@@ -181,60 +179,62 @@ describe('Admin Languages API', () => {
       expect(res.body.name).toBe('Deutsch (Updated)');
     });
 
-    it('should prevent archiving default language pl', async () => {
-      await ensurePlExists();
+    it('should prevent archiving default language en', async () => {
+      await ensureDefaultLanguagesExist();
 
-      const pl = await Language.findOne({ code: 'pl' });
-      expect(pl).toBeTruthy();
-
-      const res = await request(app)
-        .put(`/api/admin/languages/${pl._id}`)
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ isArchived: true });
-
-      // zgodnie z Twoją logiką w kontrolerze powinno być 400
-      expect(res.statusCode).toBe(400);
-      expect(res.body.message).toMatch(/cannot archive/i);
-
-      const plAfter = await Language.findById(pl._id).lean();
-      expect(plAfter.isArchived).toBe(false);
-    });
-
-    it('should migrate i18n keys in Interest & Category when code changes (en -> en-us)', async () => {
-      await Language.deleteMany({ code: { $in: ['en', 'en-us'] } });
-      const en = await Language.create({ code: 'en', name: 'English', nativeName: 'English', isArchived: false });
-
-      const cat = await createInterestCategory({ name: `Kategoria ${rand()}`, description: 'PL desc' });
-      const intr = await createInterest({ name: `Zainteresowanie ${rand()}`, category: cat, description: 'PL interest desc' });
-
-      // ustaw i18n.en
-      const catDoc = await InterestCategory.findById(cat._id);
-      catDoc.i18n = catDoc.i18n || new Map();
-      catDoc.i18n.set('en', { name: 'Category EN', description: 'EN desc' });
-      await catDoc.save();
-
-      const intrDoc = await Interest.findById(intr._id);
-      intrDoc.i18n = intrDoc.i18n || new Map();
-      intrDoc.i18n.set('en', { name: 'Interest EN', description: 'EN interest desc' });
-      await intrDoc.save();
+      const en = await Language.findOne({ code: 'en' });
+      expect(en).toBeTruthy();
 
       const res = await request(app)
         .put(`/api/admin/languages/${en._id}`)
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ code: 'en-us', name: 'English (US)' });
+        .send({ isArchived: true });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.message).toMatch(/cannot archive/i);
+
+      const enAfter = await Language.findById(en._id).lean();
+      expect(enAfter.isArchived).toBe(false);
+    });
+
+
+    it('should migrate i18n keys in Interest & Category when code changes (de -> de-at)', async () => {
+      await ensureDefaultLanguagesExist();
+
+      await Language.deleteMany({ code: { $in: ['de', 'de-at'] } });
+      const de = await Language.create({ code: 'de', name: 'German', nativeName: 'Deutsch', isArchived: false });
+
+      const cat = await createInterestCategory({ name: `Some EN Cat ${rand()}`, description: 'EN base desc' });
+      const intr = await createInterest({ name: `Some EN Interest ${rand()}`, category: cat, description: 'EN base interest desc' });
+
+      // ustaw i18n.de
+      const catDoc = await InterestCategory.findById(cat._id);
+      catDoc.i18n = catDoc.i18n || new Map();
+      catDoc.i18n.set('de', { name: 'Kategorie DE', description: 'DE beschreibung' });
+      await catDoc.save();
+
+      const intrDoc = await Interest.findById(intr._id);
+      intrDoc.i18n = intrDoc.i18n || new Map();
+      intrDoc.i18n.set('de', { name: 'Interesse DE', description: 'DE interesse beschreibung' });
+      await intrDoc.save();
+
+      const res = await request(app)
+        .put(`/api/admin/languages/${de._id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ code: 'de-at', name: 'German (AT)' });
 
       expect(res.statusCode).toBe(200);
-      expect(res.body.code).toBe('en-us');
+      expect(res.body.code).toBe('de-at');
 
       const catAfter = await InterestCategory.findById(cat._id).lean();
-      expect(catAfter.i18n['en-us']).toBeTruthy();
-      expect(catAfter.i18n['en-us'].name).toBe('Category EN');
-      expect(catAfter.i18n['en']).toBeUndefined();
+      expect(catAfter.i18n['de-at']).toBeTruthy();
+      expect(catAfter.i18n['de-at'].name).toBe('Kategorie DE');
+      expect(catAfter.i18n['de']).toBeUndefined();
 
       const intrAfter = await Interest.findById(intr._id).lean();
-      expect(intrAfter.i18n['en-us']).toBeTruthy();
-      expect(intrAfter.i18n['en-us'].name).toBe('Interest EN');
-      expect(intrAfter.i18n['en']).toBeUndefined();
+      expect(intrAfter.i18n['de-at']).toBeTruthy();
+      expect(intrAfter.i18n['de-at'].name).toBe('Interesse DE');
+      expect(intrAfter.i18n['de']).toBeUndefined();
     });
   });
 

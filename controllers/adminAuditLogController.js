@@ -1,37 +1,46 @@
 const AuditLog = require('../models/AuditLog');
 const { validationResult } = require('express-validator');
 
-// @desc    Get all audit logs (paginated, filterable)
-// @route   GET /api/admin/audit-logs
-// @access  Private (Superadmin usually, or specific admin role)
+// Retrieves paginated audit logs with filtering capabilities
 const getAuditLogs = async (req, res) => {
+    // Validate request inputs
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
         return res.status(400).json({ errors: errors.array() });
     }
+
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 25; // Więcej logów na stronę
+    const limit = parseInt(req.query.limit) || 25;
     const skip = (page - 1) * limit;
 
+    const { level, action, actorId, actorType, targetId, targetType, startDate, endDate } = req.query;
     const query = {};
-    if (req.query.level) query.level = req.query.level;
-    if (req.query.action) query.action = { $regex: req.query.action, $options: 'i' };
-    if (req.query.actorId) query.actorId = req.query.actorId;
-    if (req.query.actorType) query.actorType = req.query.actorType;
-    if (req.query.targetId) query.targetId = req.query.targetId;
-    if (req.query.targetType) query.targetType = req.query.targetType;
-    if (req.query.startDate) query.timestamp = { ...query.timestamp, $gte: new Date(req.query.startDate) };
-    if (req.query.endDate) query.timestamp = { ...query.timestamp, $lte: new Date(req.query.endDate) };
 
+    // Apply filters
+    if (level) query.level = level;
+    if (action) query.action = { $regex: action, $options: 'i' };
+    if (actorId) query.actorId = actorId;
+    if (actorType) query.actorType = actorType;
+    if (targetId) query.targetId = targetId;
+    if (targetType) query.targetType = targetType;
+
+    // Apply date range filter
+    if (startDate || endDate) {
+        query.timestamp = {};
+        if (startDate) query.timestamp.$gte = new Date(startDate);
+        if (endDate) query.timestamp.$lte = new Date(endDate);
+    }
 
     try {
-        const logs = await AuditLog.find(query)
-                                   .populate('actorId', 'username')
-                                   .sort({ timestamp: -1 })
-                                   .skip(skip)
-                                   .limit(limit);
-
-        const totalLogs = await AuditLog.countDocuments(query);
+        // Fetch logs and total count concurrently
+        const [logs, totalLogs] = await Promise.all([
+            AuditLog.find(query)
+                .populate('actorId', 'username')
+                .sort({ timestamp: -1 })
+                .skip(skip)
+                .limit(limit),
+            AuditLog.countDocuments(query)
+        ]);
 
         res.json({
             logs,
@@ -40,7 +49,7 @@ const getAuditLogs = async (req, res) => {
             totalLogs,
         });
     } catch (error) {
-        console.error('Admin Get Audit Logs Error:', error);
+        console.error('AuditLog Fetch Error:', error.message);
         res.status(500).json({ message: 'Server Error fetching audit logs.' });
     }
 };

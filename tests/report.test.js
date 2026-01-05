@@ -148,7 +148,8 @@ describe('Report API (User Perspective)', () => {
             .send(reportData);
 
         expect(res.statusCode).toEqual(401);
-        expect(res.body.message).toContain('Not authorized, no token or malformed header');
+        expect(res.body).toHaveProperty('message');
+        expect(res.body.message).toMatch(/no token/i);
         });
 
     });

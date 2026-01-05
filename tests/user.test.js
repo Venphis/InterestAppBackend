@@ -45,7 +45,8 @@ describe('User API - Profile', () => {
     it('should not get profile without token', async () => {
         const res = await request(app).get('/api/users/profile');
         expect(res.statusCode).toEqual(401);
-        expect(res.body).toHaveProperty('message', 'Not authorized, no token or malformed header');
+        expect(res.body).toHaveProperty('message');
+        expect(res.body.message).toMatch(/no token/i);
     });
 
     it('should update user profile (text data)', async () => {

@@ -233,58 +233,58 @@ describe('Admin Interests API', () => {
     });
 
     describe('i18n - Admin translation endpoints', () => {
-        let cat;
-        let intr;
-
         beforeEach(async () => {
             const suffix = rand();
-            cat = await createInterestCategory({ name: `Kategoria PL ${suffix}`, description: 'Opis PL' });
-            intr = await createInterest({ name: `Zainteresowanie PL ${suffix}`, category: cat, description: 'Opis zainteresowania PL' });
+
+            // EN jest bazowy, więc bazowe pola ustawiamy po EN
+            cat = await createInterestCategory({ name: `Category EN ${suffix}`, description: 'EN desc base' });
+            intr = await createInterest({ name: `Interest EN ${suffix}`, category: cat, description: 'EN interest desc base' });
+
+            // A polski zapisujemy jako tłumaczenie (pl)
+            await request(app)
+                .patch(`/api/admin/interests/categories/${cat._id}/translations/pl`)
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ name: `Kategoria PL ${suffix}`, description: 'Opis PL' });
+
+            await request(app)
+                .patch(`/api/admin/interests/${intr._id}/translations/pl`)
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ name: `Zainteresowanie PL ${suffix}`, description: 'Opis zainteresowania PL' });
         });
 
         it('should allow admin to upsert category translation (PATCH .../categories/:id/translations/en)', async () => {
+            const suffix = rand();
+
             const res = await request(app)
-                .patch(`/api/admin/interests/categories/${cat._id}/translations/en`)
-                .set('Authorization', `Bearer ${adminToken}`)
-                .send({ name: 'Category EN', description: 'EN desc' });
+            .patch(`/api/admin/interests/categories/${cat._id}/translations/en`)
+            .set('Authorization', `Bearer ${adminToken}`)
+            .send({ name: `Category EN ${suffix}`, description: 'EN desc' });
 
             expect(res.statusCode).toBe(200);
 
-            // response może zawierać i18n jako obiekt
-            expect(res.body).toHaveProperty('i18n');
-            expect(res.body.i18n.en).toBeTruthy();
-            expect(res.body.i18n.en.name).toBe('Category EN');
-
-            const inDb = await InterestCategory.findById(cat._id).lean();
-            expect(inDb.i18n).toBeTruthy();
-            expect(inDb.i18n.en).toBeTruthy();
-            expect(inDb.i18n.en.name).toBe('Category EN');
+            // jeśli EN jest bazowy, backend może też zmienić bazowe `name`
+            expect(res.body.name).toBe(`Category EN ${suffix}`);
         });
 
-        it('should allow admin to upsert interest translation and public API should return it for lang=en', async () => {
-            // najpierw ustaw tłumaczenie kategorii, żeby public API mogło zwrócić Category EN
-            await request(app)
-                .patch(`/api/admin/interests/categories/${cat._id}/translations/en`)
-                .set('Authorization', `Bearer ${adminToken}`)
-                .send({ name: 'Category EN', description: 'EN desc' });
-
-            const patchRes = await request(app)
-                .patch(`/api/admin/interests/${intr._id}/translations/en`)
-                .set('Authorization', `Bearer ${adminToken}`)
-                .send({ name: 'Interest EN', description: 'EN interest desc' });
-
-            expect(patchRes.statusCode).toBe(200);
-            expect(patchRes.body).toHaveProperty('i18n');
-            expect(patchRes.body.i18n.en).toBeTruthy();
-            expect(patchRes.body.i18n.en.name).toBe('Interest EN');
-
+        it('should allow admin to upsert PL translation and public API should return EN base for lang=en', async () => {
             const pubRes = await request(app)
                 .get(`/api/public/interests?categoryId=${cat._id}&lang=en`);
 
             expect(pubRes.statusCode).toBe(200);
             expect(pubRes.body.length).toBe(1);
-            expect(pubRes.body[0].name).toBe('Interest EN');
-            expect(pubRes.body[0].category.name).toBe('Category EN');
+
+            // EN bazowe
+            expect(pubRes.body[0].name).toBe(intr.name);
+            expect(pubRes.body[0].category.name).toBe(cat.name);
+
+            // a dla pl powinno zwrócić tłumaczenia
+            const pubResPl = await request(app)
+                .get(`/api/public/interests?categoryId=${cat._id}&lang=pl`);
+
+            expect(pubResPl.statusCode).toBe(200);
+            expect(pubResPl.body.length).toBe(1);
+            expect(pubResPl.body[0].name).toMatch(/^Zainteresowanie PL/);
+            expect(pubResPl.body[0].category.name).toMatch(/^Kategoria PL/);
         });
 
         it('should return 400 for invalid language code', async () => {

@@ -339,7 +339,7 @@ describe('Admin Users API', () => {
             .set('Authorization', `Bearer ${adminToken}`)
             .send({ role: newRole });
         expect(res.statusCode).toEqual(403);
-        expect(res.body.message).toContain('not authorized to access this route');
+        expect(res.body.message).toMatch(/access denied|not authorized/i);
         });
 
         it('should allow superadmin to change a user role to "premium_user"', async () => {
@@ -373,7 +373,7 @@ describe('Admin Users API', () => {
                 .set('Authorization', `Bearer ${adminToken}`)
                 .send({ role: newRole });
             expect(res.statusCode).toEqual(403);
-            expect(res.body.message).toContain('not authorized to access this route');
+            expect(res.body.message).toMatch(/access denied|not authorized/i);
         });
 
         it('should return validation error if role is invalid or not provided for role change', async () => {
@@ -473,7 +473,7 @@ describe('Admin Users API', () => {
                 .set('Authorization', `Bearer ${adminToken}`); // Użyj tokenu admina
 
             expect(res.statusCode).toEqual(403); // Oczekujemy Forbidden
-            expect(res.body.message).toContain('not authorized to access this route');
+            expect(res.body.message).toMatch(/access denied|not authorized/i);
         });
 
         it('should NOT allow a moderator to soft delete a user', async () => {

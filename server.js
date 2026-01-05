@@ -1,11 +1,19 @@
+// Main entry point: initializes Express, MongoDB, Socket.io, and API routes
 const http = require('http');
+const path = require('path');
 const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
-const path = require('path');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const { Server } = require("socket.io");
+
+// Local config and utilities
 const connectDB = require('./config/db');
 const logAuditEvent = require('./utils/auditLogger');
+const { ensurePolishLanguage } = require('./utils/seedLanguages');
 
+// Route imports
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const chatRoutes = require('./routes/chatRoutes');
@@ -15,51 +23,57 @@ const publicInterestRoutes = require('./routes/publicInterestRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const keyRoutes = require('./routes/keyRoutes');
 const backupRoutes = require('./routes/backupRoutes');
+const certificateRoutes = require('./routes/certificateRoutes');
 
+// Admin route imports
 const adminAuthRoutes = require('./routes/adminAuthRoutes');
 const adminUserRoutes = require('./routes/adminUserRoutes');
 const adminReportRoutes = require('./routes/adminReportRoutes');
 const adminInterestRoutes = require('./routes/adminInterestRoutes');
 const adminManagementRoutes = require('./routes/adminManagementRoutes');
 const adminAuditLogRoutes = require('./routes/adminAuditLogRoutes');
-const certificateRoutes = require('./routes/certificateRoutes');
 const adminLanguageRoutes = require('./routes/adminLanguageRoutes');
-
-const { Server } = require("socket.io");
-const rateLimit = require('express-rate-limit');
-const helmet = require('helmet');
-
-const { ensurePolishLanguage } = require('./utils/seedLanguages');
-
-
 
 dotenv.config();
 
+// Fail fast: verify critical JWT secrets before starting
+const adminSecret = process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET;
+if (!adminSecret || adminSecret.length < 16) {
+  console.error('FATAL: JWT_ADMIN_SECRET missing or too short.');
+  process.exit(1);
+}
+
 const app = express();
+
+// Trust proxy for correct IP resolution behind Nginx/Docker
 app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(helmet());
 
+// Rate limiting (skip in test environment)
 if (process.env.NODE_ENV !== 'test') {
-    const limiter = rateLimit({
-        windowMs: 15 * 60 * 1000,
-        max: 200,
-        standardHeaders: true,
-        legacyHeaders: false,
-        message: 'Too many requests from this IP, please try again after 15 minutes'
-    });
-    app.use('/api', limiter);
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: 'Too many requests, please try again later'
+  });
+  app.use('/api', limiter);
 }
 
-app.use(express.json());
+// Parse bodies with increased limit for file uploads
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
 app.get('/', (req, res) => {
-  res.send(`API for ${process.env.APP_NAME || 'Social App'} is running in ${process.env.NODE_ENV || 'development'} mode...`);
+  res.send(`API is running.`);
 });
 
+// Register API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/chats', chatRoutes);
@@ -68,9 +82,10 @@ app.use('/api/friendships', friendshipRoutes);
 app.use('/api/public/interests', publicInterestRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/certificates', certificateRoutes);
-app.use('/api/keys', keyRoutes);    
-app.use('/api/backups', backupRoutes)
+app.use('/api/keys', keyRoutes);
+app.use('/api/backups', backupRoutes);
 
+// Register Admin API routes
 app.use('/api/admin/auth', adminAuthRoutes);
 app.use('/api/admin/users', adminUserRoutes);
 app.use('/api/admin/reports', adminReportRoutes);
@@ -79,121 +94,94 @@ app.use('/api/admin/management', adminManagementRoutes);
 app.use('/api/admin/audit-logs', adminAuditLogRoutes);
 app.use('/api/admin/languages', adminLanguageRoutes);
 
+// Socket.io setup
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   pingTimeout: 60000,
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE"]
-  },
+  cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] },
 });
+
+// Expose Socket.io instance to the app
 app.set('socketio', io);
 
 let onlineUsers = {};
 
 io.on("connection", (socket) => {
-  if (process.env.NODE_ENV !== 'test') {
-    console.log("Socket.io: Client connected:", socket.id);
-  }
+  if (process.env.NODE_ENV !== 'test') console.log("Client connected:", socket.id);
 
+  // Map user ID to socket ID
   socket.on('setup', (userData) => {
-      if (!userData || !userData._id) {
-          if (process.env.NODE_ENV !== 'test') console.log("Socket.io: Invalid user data on setup");
-          return;
-      }
-      if (process.env.NODE_ENV !== 'test') console.log(`Socket.io: User ${userData.username} (${userData._id}) setup with socket ${socket.id}`);
-      socket.join(userData._id.toString());
-      onlineUsers[userData._id.toString()] = socket.id;
-      socket.emit('connected');
+    if (!userData || !userData._id) return;
+    socket.join(userData._id.toString());
+    onlineUsers[userData._id.toString()] = socket.id;
+    socket.emit('connected');
   });
 
-  socket.on('join chat', (room) => {
-    socket.join(room.toString());
-    if (process.env.NODE_ENV !== 'test') console.log("Socket.io: User " + socket.id + " joined Room: " + room);
-  });
+  socket.on('join chat', (room) => socket.join(room.toString()));
 
+  // Broadcast new messages to chat participants
   socket.on('new message', (newMessageReceived) => {
-      const chat = newMessageReceived.chatId;
-      if (!chat || !chat.participants) {
-          if (process.env.NODE_ENV !== 'test') console.log("Socket.io: 'new message' - Chat or participants not defined in message:", newMessageReceived);
-          return;
-      }
+    const chat = newMessageReceived.chatId;
+    if (!chat || !chat.participants) return;
 
-      chat.participants.forEach((participant) => {
-          if (participant && participant._id && newMessageReceived.senderId && newMessageReceived.senderId._id) {
-              if (participant._id.toString() === newMessageReceived.senderId._id.toString()) return;
-              io.to(participant._id.toString()).emit("message received", newMessageReceived);
-              if (process.env.NODE_ENV !== 'test') console.log(`Socket.io: Emitted 'message received' to room ${participant._id.toString()}`);
-          }
-      });
+    chat.participants.forEach((participant) => {
+      if (participant._id.toString() === newMessageReceived.senderId._id.toString()) return;
+      io.to(participant._id.toString()).emit("message received", newMessageReceived);
+    });
   });
 
   socket.on('typing', (room) => socket.in(room.toString()).emit('typing', room));
   socket.on('stop typing', (room) => socket.in(room.toString()).emit('stop typing', room));
 
   socket.on("disconnect", () => {
-    if (process.env.NODE_ENV !== 'test') console.log("Socket.io: Client disconnected", socket.id);
-      for (const userId in onlineUsers) {
-          if (onlineUsers[userId] === socket.id) {
-              delete onlineUsers[userId];
-              if (process.env.NODE_ENV !== 'test') console.log(`Socket.io: User ${userId} removed from online users`);
-              break;
-          }
-      }
+    Object.keys(onlineUsers).forEach(key => {
+      if (onlineUsers[key] === socket.id) delete onlineUsers[key];
+    });
   });
 });
 
+// 404 Handler
 app.use((req, res, next) => {
-    const error = new Error(`Not Found - ${req.originalUrl}`);
-    error.status = 404;
-    next(error);
+  const error = new Error(`Not Found - ${req.originalUrl}`);
+  error.status = 404;
+  next(error);
 });
 
-app.use(async (err, req, res, next) => { 
-    const statusCode = err.status || (res.statusCode === 200 ? 500 : res.statusCode);
-    const errorMessage = err.message || 'Internal Server Error';
+// Global Error Handler
+app.use(async (err, req, res, next) => {
+  const statusCode = err.status || (res.statusCode === 200 ? 500 : res.statusCode);
+  const errorMessage = err.message || 'Internal Server Error';
 
-    if (process.env.NODE_ENV !== 'test') {
-        console.error("GLOBAL ERROR HANDLER:", errorMessage, (process.env.NODE_ENV === 'development' ? err.stack : ''));
-    }
+  if (process.env.NODE_ENV !== 'test') console.error("Error:", errorMessage);
 
-    try {
-        await logAuditEvent(
-            'server_error_occurred', { type: 'system' },
-            statusCode >= 500 ? 'critical' : 'error',
-            {}, {
-                message: errorMessage,
-                stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
-                url: req.originalUrl, method: req.method
-            }, req
-        );
-    } catch (logError) {
-        console.error("CRITICAL: Failed to log server error to audit log:", logError);
-    }
+  // Attempt to log system errors to audit log
+  try {
+    await logAuditEvent(
+      'server_error_occurred',
+      { type: 'system' },
+      statusCode >= 500 ? 'critical' : 'error',
+      {},
+      { message: errorMessage, url: req.originalUrl, method: req.method },
+      req
+    );
+  } catch (e) { /* Ignore logging errors */ }
 
-    res.status(statusCode).json({
-        message: errorMessage,
-    });
+  res.status(statusCode).json({ message: errorMessage });
 });
-
 
 const PORT = process.env.PORT || 5000;
 
+// Start server if run directly
 if (require.main === module && process.env.NODE_ENV !== 'test') {
-    connectDB().then(async () => {
-        await ensurePolishLanguage(); 
-        httpServer.listen(PORT, () => {
-            console.log(`Server running on PORT ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
-        });
-    }).catch(err => {
-        console.error("FATAL: Failed to connect to MongoDB. Server not started.", err);
-        process.exit(1);
-    });
+  connectDB().then(async () => {
+    await ensurePolishLanguage();
+    httpServer.listen(PORT, () => console.log(`Server running on PORT ${PORT}`));
+  }).catch(err => {
+    console.error("DB Connection Failed:", err);
+    process.exit(1);
+  });
 } else if (process.env.NODE_ENV !== 'test') {
-    connectDB()
-      .then(() => ensurePolishLanguage()) 
-      .catch(err => console.error("DB connection failed on import (non-test):", err));
+  connectDB().catch(err => console.error("DB Connection Error:", err));
 }
-
 
 module.exports = app;

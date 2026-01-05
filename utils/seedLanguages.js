@@ -1,19 +1,26 @@
 const Language = require('../models/Language');
 
-async function ensurePolishLanguage() {
-  // DODA tylko jeśli nie ma - nic nie nadpisuje, nic nie usuwa, nie dotyka innych języków
-  await Language.updateOne(
-    { code: 'pl' },
-    {
-      $setOnInsert: {
-        code: 'pl',
-        name: 'Polski',
-        nativeName: 'Polski',
-        isArchived: false,
-      },
-    },
-    { upsert: true }
+// Seeds initial languages (EN, PL) into the database if they don't exist
+async function ensureDefaultLanguages() {
+  const languages = [
+    { code: 'en', name: 'English', nativeName: 'English' },
+    { code: 'pl', name: 'Polski', nativeName: 'Polski' }
+  ];
+
+  // Execute operations in parallel for performance
+  const operations = languages.map(lang => 
+    Language.updateOne(
+      { code: lang.code },
+      { $setOnInsert: { ...lang, isArchived: false } },
+      { upsert: true }
+    )
   );
+
+  await Promise.all(operations);
 }
 
-module.exports = { ensurePolishLanguage };
+// Export as both generic name and the specific name used in server.js
+module.exports = { 
+    ensureDefaultLanguages, 
+    ensurePolishLanguage: ensureDefaultLanguages 
+};

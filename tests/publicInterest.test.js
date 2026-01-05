@@ -29,18 +29,18 @@ describe('Public Interest API', () => {
         await createInterest({ name: 'Basketball', category: categorySports });
 
         // --- i18n test data (PL base + EN translation)
-        categoryPl = await createInterestCategory({ name: 'Kategoria PL', description: 'Opis PL' });
-        interestPl = await createInterest({ name: 'Zainteresowanie PL', category: categoryPl, description: 'Opis zainteresowania PL' });
+        categoryPl = await createInterestCategory({ name: 'Category EN', description: 'EN category description' });
+        interestPl = await createInterest({ name: 'Interest EN', category: categoryPl, description: 'EN interest description' });
 
-        // ustaw tłumaczenia (w modelu z polem i18n)
+        // ustaw PL jako tłumaczenie
         const catDoc = await InterestCategory.findById(categoryPl._id);
         catDoc.i18n = catDoc.i18n || new Map();
-        catDoc.i18n.set('en', { name: 'Category EN', description: 'EN category description' });
+        catDoc.i18n.set('pl', { name: 'Kategoria PL', description: 'Opis PL kategorii' });
         await catDoc.save();
 
         const intDoc = await Interest.findById(interestPl._id);
         intDoc.i18n = intDoc.i18n || new Map();
-        intDoc.i18n.set('en', { name: 'Interest EN', description: 'EN interest description' });
+        intDoc.i18n.set('pl', { name: 'Zainteresowanie PL', description: 'Opis PL zainteresowania' });
         await intDoc.save();
     });
 
@@ -53,7 +53,9 @@ describe('Public Interest API', () => {
             // mamy +1 bo dodaliśmy "Kategoria PL"
             expect(res.body.length).toBe(4);
             expect(res.body[0].name).toBe('Books');
-            expect(res.body.map(c => c.name)).toEqual(expect.arrayContaining(['Technology', 'Books', 'Sports', 'Kategoria PL']));
+            expect(res.body.map(c => c.name)).toEqual(
+                expect.arrayContaining(['Technology', 'Books', 'Sports', 'Category EN'])
+                );
         });
     });
 
@@ -130,8 +132,8 @@ describe('Public Interest API', () => {
             expect(res.body.length).toBe(1);
 
             // fallback => bazowa nazwa
-            expect(res.body[0].name).toBe('Zainteresowanie PL');
-            expect(res.body[0].category.name).toBe('Kategoria PL');
+            expect(res.body[0].name).toBe('Interest EN');
+            expect(res.body[0].category.name).toBe('Category EN');
         });
 
         it('should use Accept-Language header (en-US -> fallback to en)', async () => {
