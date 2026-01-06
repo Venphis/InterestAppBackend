@@ -80,6 +80,40 @@ describe('User API - Profile', () => {
         expect(res.body).toHaveProperty('errors');
         expect(res.body.errors.some(e => e.path === 'profile.displayName')).toBe(true);
     });
+
+    it('should allow user to delete their own account (soft delete)', async () => {
+    const del = await request(app)
+        .delete('/api/users/profile')
+        .set('Authorization', `Bearer ${testUserToken}`);
+
+    expect(del.statusCode).toBe(200);
+    expect(del.body).toHaveProperty('message');
+    expect(del.body.message).toMatch(/delete|removed|success/i);
+
+    const inDb = await User.findById(testUser._id).lean();
+    expect(inDb).toBeTruthy();
+    expect(inDb.isDeleted).toBe(true);
+    });
+
+    it('should not allow using the same token after deleting own account', async () => {
+    // usuń konto
+    const del = await request(app)
+        .delete('/api/users/profile')
+        .set('Authorization', `Bearer ${testUserToken}`);
+
+    expect(del.statusCode).toBe(200);
+
+    // ten sam token nie powinien już działać (middleware protect filtruje isDeleted:false)
+    const res = await request(app)
+        .get('/api/users/profile')
+        .set('Authorization', `Bearer ${testUserToken}`);
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toHaveProperty('message');
+    expect(res.body.message).toMatch(/disabled|not found|not authorized/i);
+    });
+
+
 });
 
 describe('User API - Search', () => {

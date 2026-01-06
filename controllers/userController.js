@@ -75,6 +75,43 @@ const updateUserProfile = async (req, res) => {
     }
 };
 
+// @desc    Soft delete own account
+// @route   DELETE /api/users/profile
+// @access  Private
+const deleteOwnAccount = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    if (user.isDeleted) {
+      return res.status(400).json({ message: 'Account is already deleted.' });
+    }
+
+    // opcjonalnie usuń avatar z dysku (jeśli masz pliki lokalnie)
+    if (user.profile?.avatarUrl) {
+      const avatarPath = path.join(__dirname, '..', user.profile.avatarUrl.replace(/^\//, ''));
+      if (fs.existsSync(avatarPath)) {
+        fs.unlink(avatarPath, () => {});
+      }
+    }
+
+    // wyczyść zależne dane (minimum: zainteresowania profilu)
+    await UserInterest.deleteMany({ userId: user._id });
+
+    user.isDeleted = true;
+    user.deletedAt = new Date();
+
+    // nie zmieniamy email/username (jak w admin soft-delete), żeby nie rozwalać walidacji
+    await user.save({ validateBeforeSave: false });
+
+    return res.status(200).json({ message: 'Account deleted successfully.' });
+  } catch (error) {
+    console.error('[userController] Delete Own Account Error:', error);
+    next(error);
+  }
+};
+
+
 // @desc    Find users by username, display name, or ID
 // @route   GET /api/users/search?q=...
 // @access  Private
@@ -340,6 +377,7 @@ const updateUserAvatar = async (req, res) => {
 module.exports = {
     getUserProfile,
     updateUserProfile,
+    deleteOwnAccount,
     findUsers,
     addUserInterest, 
     updateUserInterest, 

@@ -6,13 +6,11 @@ const { protect } = require('../middleware/authMiddleware');
 const { uploadAvatar } = require('../middleware/uploadMiddleware');
 const {
     getUserProfile, updateUserProfile, updateUserAvatar, findUsers,
-    addUserInterest, updateUserInterest, removeUserInterest, getUserById
+    addUserInterest, updateUserInterest, removeUserInterest, getUserById, deleteOwnAccount
 } = require('../controllers/userController');
 const router = express.Router();
 
-router.use(protect); // Zastosuj middleware `protect` do wszystkich tras poniżej
-
-// --- TRASY ZE STAŁYMI SEGMENTAMI (PRZED DYNAMICZNYMI) ---
+router.use(protect); 
 
 // Trasa dla profilu zalogowanego użytkownika
 router.route('/profile')
@@ -24,7 +22,8 @@ router.route('/profile')
         body('profile.location').optional({ checkFalsy: true }).trim().isLength({ max: 100 }).escape(),
         body('profile.bio').optional({ checkFalsy: true }).trim().isLength({ max: 500 }).escape(),
         body('profile.broadcastMessage').optional({ checkFalsy: true }).trim().isLength({ max: 280 }).escape()
-    ], updateUserProfile);
+    ], updateUserProfile)
+    .delete(deleteOwnAccount);;
 
 
 // Trasy dla avatara i zainteresowań (zagnieżdżone pod /profile)
@@ -72,7 +71,6 @@ router.get('/search', [
 
 
 
-// --- TRASA Z DYNAMICZNYM PARAMETREM (NA KOŃCU) ---
 
 // Trasa do pobierania profilu DOWOLNEGO użytkownika po ID
 router.get('/:id', [
