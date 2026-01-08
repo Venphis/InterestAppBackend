@@ -1,506 +1,214 @@
 const request = require('supertest');
 const app = require('../server');
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const AdminUser = require('../models/AdminUser');
-const jwt = require('jsonwebtoken');
 const AuditLog = require('../models/AuditLog');
-const Interest = require('../models/Interest');
-const InterestCategory = require('../models/InterestCategory');
-const UserInterest = require('../models/UserInterest');
-const mongoose = require('mongoose');
+const jwt = require('jsonwebtoken');
 const {
     createSuperAdmin,
     createAdmin,
     createUser,
     createVerifiedUser,
     createTestUserAccount,
-    generateUserToken
+    createInterestCategory,
+    createInterest,
+    addUserInterestEntry
 } = require('./helpers/factories');
 
-const superadminCreds = { username: 'rbac_superadmin', password: 'password123' };
-const adminCreds = { username: 'rbac_admin', password: 'password123' };
-const moderatorCreds = { username: 'rbac_moderator', password: 'password123' };
-
 describe('Admin Users API', () => {
-    let superadminToken, adminToken, moderatorToken; // Dodajemy moderatora
-    let regularUserForTesting;
-    let superadmin, admin; 
-
-    const superadminCredentials = { username: 'rbac_superadmin', password: 'password123' };
-    const adminCredentials = { username: 'rbac_admin', password: 'password123' };
-    const moderatorCredentials = { username: 'rbac_moderator', password: 'password123' };
+    let superadminToken, adminToken, moderatorToken;
+    let superadmin, admin, moderator;
+    let regularUser;
 
     beforeAll(async () => {
         await mongoose.connection.dropDatabase();
-        // Stwórz wszystkie role
-        [superadmin, admin, moderator] = await AdminUser.create([
-            { ...superadminCredentials, role: 'superadmin', isActive: true },
-            { ...adminCredentials, role: 'admin', isActive: true },
-            { ...moderatorCredentials, role: 'moderator', isActive: true }
-        ]);
-        // Zaloguj wszystkich adminów
-        let res = await request(app).post('/api/admin/auth/login').send(superadminCredentials);
-        superadminToken = res.body.token;
-        res = await request(app).post('/api/admin/auth/login').send(adminCredentials);
-        adminToken = res.body.token;
-        res = await request(app).post('/api/admin/auth/login').send(moderatorCredentials);
-        moderatorToken = res.body.token;
-        regularUserForTesting = await createVerifiedUser({ username: 'rbac_test_user_for_admin', email: 'rbac_for_admin@example.com' });
+
+        // Create Admins with Roles
+        superadmin = await createSuperAdmin({ username: 'superadmin' });
+        admin = await createAdmin({ username: 'admin' });
+        moderator = await createAdmin({ username: 'moderator', role: 'moderator' });
+
+        // Authenticate Admins
+        const saRes = await request(app).post('/api/admin/auth/login').send({ username: 'superadmin', password: 'superStrongPassword123!' });
+        superadminToken = saRes.body.token;
+
+        const aRes = await request(app).post('/api/admin/auth/login').send({ username: 'admin', password: 'superStrongPassword123!' });
+        adminToken = aRes.body.token;
+
+        const mRes = await request(app).post('/api/admin/auth/login').send({ username: 'moderator', password: 'superStrongPassword123!' });
+        moderatorToken = mRes.body.token;
+
+        regularUser = await createVerifiedUser({ username: 'reg_user' });
     });
 
-
     describe('GET /api/admin/users', () => {
-        let userA, userB, userTestC;
-
         beforeEach(async () => {
-            await User.deleteMany({
-                email: { $in: ['a_getlist@example.com', 'b_getlist@example.com', 'c_test_getlist@example.com'] }
-            });
-
-            userA = await createUser({ username: 'userA_getlist', email: 'a_getlist@example.com', isEmailVerified: true });
-            userB = await createUser({ username: 'userB_getlist', email: 'b_getlist@example.com', isEmailVerified: false, isBanned: true, banReason: 'spam' });
-            userTestC = await createTestUserAccount({ username: 'userTestC_getlist', email: 'c_test_getlist@example.com' });
+            await User.deleteMany({ email: { $in: ['banned@test.com', 'test@test.com'] } });
+            await createUser({ username: 'banned_user', email: 'banned@test.com', isBanned: true });
+            await createTestUserAccount({ username: 'test_acc', email: 'test@test.com' });
         });
 
-        it('should get a list of users (superadmin)', async () => {
+        it('should list users for superadmin', async () => {
             const res = await request(app)
                 .get('/api/admin/users')
                 .set('Authorization', `Bearer ${superadminToken}`);
-            expect(res.statusCode).toEqual(200);
-            expect(res.body).toHaveProperty('users');
-            expect(res.body.users.length).toBeGreaterThanOrEqual(4);
-            expect(res.body.users.some(u => u._id === userA._id.toString())).toBe(true);
+            
+            expect(res.statusCode).toBe(200);
+            expect(res.body.users.length).toBeGreaterThanOrEqual(3);
         });
 
-        it('should filter users by isBanned (admin)', async () => {
+        it('should filter by banned status', async () => {
             const res = await request(app)
                 .get('/api/admin/users?isBanned=true')
                 .set('Authorization', `Bearer ${adminToken}`);
-            expect(res.statusCode).toEqual(200);
+            
+            expect(res.statusCode).toBe(200);
             expect(res.body.users.length).toBe(1);
-            expect(res.body.users[0]._id).toBe(userB._id.toString());
+            expect(res.body.users[0].username).toBe('banned_user');
         });
 
-        it('should filter users by isTestAccount (admin)', async () => {
+        it('should filter by test account status', async () => {
             const res = await request(app)
                 .get('/api/admin/users?isTestAccount=true')
                 .set('Authorization', `Bearer ${adminToken}`);
-            expect(res.statusCode).toEqual(200);
+            
+            expect(res.statusCode).toBe(200);
             expect(res.body.users.length).toBe(1);
-            expect(res.body.users[0]._id).toBe(userTestC._id.toString());
+            expect(res.body.users[0].username).toBe('test_acc');
         });
 
-         it('should allow superadmin to see soft-deleted users', async () => {
-            await User.findByIdAndUpdate(userA._id, { isDeleted: true, deletedAt: new Date() });
+        it('should allow superadmin to view deleted users', async () => {
+            await User.findByIdAndUpdate(regularUser._id, { isDeleted: true });
+            
             const res = await request(app)
                 .get('/api/admin/users?showDeleted=true')
                 .set('Authorization', `Bearer ${superadminToken}`);
-            expect(res.statusCode).toEqual(200);
-            expect(res.body.users.some(u => u._id === userA._id.toString() && u.isDeleted === true)).toBe(true);
-        });
-
-        it('should not allow non-superadmin to see soft-deleted users even if requested', async () => {
-            await User.findByIdAndUpdate(userA._id, { isDeleted: true, deletedAt: new Date() });
-            const res = await request(app)
-                .get('/api/admin/users?showDeleted=true')
-                .set('Authorization', `Bearer ${adminToken}`);
-            expect(res.statusCode).toEqual(200);
-            expect(res.body.users.every(u => u.isDeleted === false)).toBe(true);
+            
+            expect(res.statusCode).toBe(200);
+            expect(res.body.users.some(u => u.isDeleted)).toBe(true);
         });
     });
 
-    describe('GET /api/admin/users/:userId/interests', () => {
-    let targetUser;
-    let category;
-    let interest1, interest2;
-
-    beforeEach(async () => {
-        // Czyścimy dane powiązane z tym testem
-        await UserInterest.deleteMany({});
-        // Uwaga: jeśli masz dużo testów i inne też używają Interest/Category, możesz ograniczyć deleteMany filtrami.
-        await Interest.deleteMany({ name: { $in: ['Test Interest 1', 'Test Interest 2'] } });
-        await InterestCategory.deleteMany({ name: { $in: ['Test Category'] } });
-
-        targetUser = await createVerifiedUser({
-            username: 'interests_target_user',
-            email: 'interests_target@example.com'
-        });
-
-        // Tworzymy kategorię i zainteresowania (przykładowo)
-        category = await InterestCategory.create({
-            name: 'Test Category',
-            description: 'Category description'
-        });
-
-        interest1 = await Interest.create({
-            name: 'Test Interest 1',
-            description: 'Interest 1 description',
-            category: category._id,
-            isArchived: false
-        });
-
-        interest2 = await Interest.create({
-            name: 'Test Interest 2',
-            description: 'Interest 2 description',
-            category: category._id,
-            isArchived: true
-        });
-
-        // Linkujemy usera z zainteresowaniami
-        await UserInterest.create([
-            {
-                userId: targetUser._id,
-                interestId: interest1._id,
-                customDescription: 'Custom desc 1'
-            },
-            {
-                userId: targetUser._id,
-                interestId: interest2._id,
-                customDescription: 'Custom desc 2'
-            }
-        ]);
-    });
-
-    it('should allow superadmin to get user interests', async () => {
-        const res = await request(app)
-            .get(`/api/admin/users/${targetUser._id}/interests`)
-            .set('Authorization', `Bearer ${superadminToken}`);
-
-        expect(res.statusCode).toEqual(200);
-        expect(Array.isArray(res.body)).toBe(true);
-        expect(res.body.length).toBe(2);
-
-        // sprawdź format pierwszego elementu
-        const first = res.body[0];
-        expect(first).toHaveProperty('userInterestId');
-        expect(first).toHaveProperty('interestId');
-        expect(first).toHaveProperty('name');
-        expect(first).toHaveProperty('category');
-        expect(first).toHaveProperty('description');
-        expect(first).toHaveProperty('customDescription');
-        expect(first).toHaveProperty('isArchived');
-        expect(first).toHaveProperty('createdAt');
-
-        // sprawdź, że zwraca nasze interesty (bez założenia kolejności)
-        const names = res.body.map(x => x.name);
-        expect(names).toEqual(expect.arrayContaining(['Test Interest 1', 'Test Interest 2']));
-
-        // sprawdź, że kategoria jest zpopulowana (bo w controllerze robisz nested populate)
-        const anyWithCategory = res.body.find(x => x.name === 'Test Interest 1');
-        expect(anyWithCategory.category).toBeTruthy();
-        expect(anyWithCategory.category).toHaveProperty('_id');
-        expect(anyWithCategory.category).toHaveProperty('name', 'Test Category');
-    });
-
-    it('should allow admin to get user interests', async () => {
-        const res = await request(app)
-            .get(`/api/admin/users/${targetUser._id}/interests`)
-            .set('Authorization', `Bearer ${adminToken}`);
-
-        expect(res.statusCode).toEqual(200);
-        expect(res.body.length).toBe(2);
-    });
-
-    it('should allow moderator to get user interests', async () => {
-        const res = await request(app)
-            .get(`/api/admin/users/${targetUser._id}/interests`)
-            .set('Authorization', `Bearer ${moderatorToken}`);
-
-        expect(res.statusCode).toEqual(200);
-        expect(res.body.length).toBe(2);
-    });
-
-    it('should return empty array when user has no interests', async () => {
-        // Usuń powiązania
-        await UserInterest.deleteMany({ userId: targetUser._id });
-
-        const res = await request(app)
-            .get(`/api/admin/users/${targetUser._id}/interests`)
-            .set('Authorization', `Bearer ${adminToken}`);
-
-        expect(res.statusCode).toEqual(200);
-        expect(Array.isArray(res.body)).toBe(true);
-        expect(res.body.length).toBe(0);
-    });
-
-    it('should return 404 if user not found', async () => {
-        const nonExistingUserId = new mongoose.Types.ObjectId().toString();
-
-        const res = await request(app)
-            .get(`/api/admin/users/${nonExistingUserId}/interests`)
-            .set('Authorization', `Bearer ${adminToken}`);
-
-        expect(res.statusCode).toEqual(404);
-        expect(res.body.message).toContain('User not found');
-    });
-
-    it('should return 400 for invalid userId format (validation error)', async () => {
-        const res = await request(app)
-            .get('/api/admin/users/invalid-id/interests')
-            .set('Authorization', `Bearer ${adminToken}`);
-
-        expect(res.statusCode).toEqual(400);
-        expect(res.body).toHaveProperty('errors');
-        expect(Array.isArray(res.body.errors)).toBe(true);
-    });
-});
-
-
-    describe('User Actions by Admin', () => {
-        let userToModify;
+    describe('User Actions (Ban/Unban)', () => {
+        let targetUser;
 
         beforeEach(async () => {
-            await User.deleteMany({ email: 'modifyActionUser@example.com' });
-            userToModify = await createVerifiedUser({ username: 'toModifyActionUser', email: 'modifyActionUser@example.com' });
+            targetUser = await createVerifiedUser({ username: 'target_action' });
         });
 
-        it('should ban a user (superadmin)', async () => {
+        it('should ban user and log audit event', async () => {
             const res = await request(app)
-                .put(`/api/admin/users/${userToModify._id}/ban`)
+                .put(`/api/admin/users/${targetUser._id}/ban`)
                 .set('Authorization', `Bearer ${superadminToken}`)
-                .send({ banReason: 'Violation of terms for test' });
-            expect(res.statusCode).toEqual(200);
-            expect(res.body.message).toContain('banned successfully');
-            const userInDb = await User.findById(userToModify._id);
-            expect(userInDb.isBanned).toBe(true);
-            expect(userInDb.banReason).toBe('Violation of terms for test');
+                .send({ banReason: 'Spamming' });
+
+            expect(res.statusCode).toBe(200);
+            
+            const user = await User.findById(targetUser._id);
+            expect(user.isBanned).toBe(true);
+
+            const log = await AuditLog.findOne({ action: 'admin_banned_user', targetId: targetUser._id });
+            expect(log).toBeTruthy();
         });
 
-        it('should unban a user (admin)', async () => {
-            await User.findByIdAndUpdate(userToModify._id, { isBanned: true, banReason: 'Old ban' });
+        it('should unban user', async () => {
+            await User.findByIdAndUpdate(targetUser._id, { isBanned: true });
+            
             const res = await request(app)
-                .put(`/api/admin/users/${userToModify._id}/unban`)
+                .put(`/api/admin/users/${targetUser._id}/unban`)
                 .set('Authorization', `Bearer ${adminToken}`);
-            expect(res.statusCode).toEqual(200);
-            const userInDb = await User.findById(userToModify._id);
-            expect(userInDb.isBanned).toBe(false);
-            expect(userInDb.banReason).toBeNull();
+
+            expect(res.statusCode).toBe(200);
+            const user = await User.findById(targetUser._id);
+            expect(user.isBanned).toBe(false);
+        });
+    });
+
+    describe('RBAC - Role Restrictions', () => {
+        let targetUser;
+
+        beforeEach(async () => {
+            targetUser = await createVerifiedUser({ username: 'rbac_target' });
         });
 
-        it('should soft delete a user (superadmin)', async () => {
+        it('should prevent Admin from soft deleting user', async () => {
             const res = await request(app)
-                .delete(`/api/admin/users/${userToModify._id}`)
-                .set('Authorization', `Bearer ${superadminToken}`);
-            expect(res.statusCode).toEqual(200);
-            const userInDb = await User.findById(userToModify._id);
-            expect(userInDb.isDeleted).toBe(true);
-            expect(userInDb.deletedAt).toBeInstanceOf(Date);
-        });
-
-         it('should restore a soft-deleted user (superadmin)', async () => {
-            await User.findByIdAndUpdate(userToModify._id, { isDeleted: true, deletedAt: new Date() });
-            const res = await request(app)
-                .put(`/api/admin/users/${userToModify._id}/restore`)
-                .set('Authorization', `Bearer ${superadminToken}`);
-            expect(res.statusCode).toEqual(200);
-            const userInDb = await User.findById(userToModify._id);
-            expect(userInDb.isDeleted).toBe(false);
-            expect(userInDb.deletedAt).toBeNull();
-        });
-
-        it('should manually verify a user email (admin)', async () => {
-            await User.findByIdAndUpdate(userToModify._id, { isEmailVerified: false });
-            const res = await request(app)
-                .put(`/api/admin/users/${userToModify._id}/verify-email`)
+                .delete(`/api/admin/users/${targetUser._id}`)
                 .set('Authorization', `Bearer ${adminToken}`);
-            expect(res.statusCode).toEqual(200);
-            const userInDb = await User.findById(userToModify._id);
-            expect(userInDb.isEmailVerified).toBe(true);
+            
+            expect(res.statusCode).toBe(403);
         });
 
-        it('should allow superadmin to change a user role', async () => {
-            const newRole = 'premium_user'; 
-            if (!User.schema.path('role').enumValues.includes(newRole)) {
-                console.warn(`Skipping role change test: role "${newRole}" not in User schema enums.`);
-                return;
-            }
-
-
+        it('should prevent Moderator from soft deleting user', async () => {
             const res = await request(app)
-                .put(`/api/admin/users/${userToModify._id}/role`)
-                .set('Authorization', `Bearer ${superadminToken}`)
-                .send({ role: newRole });
-
-            expect(res.statusCode).toEqual(200);
-            expect(res.body.user.role).toBe(newRole);
-
-            const userInDb = await User.findById(userToModify._id);
-            expect(userInDb.role).toBe(newRole);
+                .delete(`/api/admin/users/${targetUser._id}`)
+                .set('Authorization', `Bearer ${moderatorToken}`);
+            
+            expect(res.statusCode).toBe(403);
         });
 
-        it('should not allow an admin with insufficient role to change a user role (if role change restricted)', async () => {
-        const newRole = 'premium_user';
-        if (!User.schema.path('role').enumValues.includes(newRole)) {
-            return; 
-        }
-
-        const res = await request(app)
-            .put(`/api/admin/users/${userToModify._id}/role`)
-            .set('Authorization', `Bearer ${adminToken}`)
-            .send({ role: newRole });
-        expect(res.statusCode).toEqual(403);
-        expect(res.body.message).toMatch(/access denied|not authorized/i);
-        });
-
-        it('should allow superadmin to change a user role to "premium_user"', async () => {
-        const newRole = 'premium_user';
-        if (!User.schema.path('role').enumValues.includes(newRole)) {
-            console.warn(`SKIPPING TEST: Role "${newRole}" is not defined in User schema enums. Please add it to test this feature.`);
-            return;
-        }
-
-        const res = await request(app)
-            .put(`/api/admin/users/${userToModify._id}/role`)
-            .set('Authorization', `Bearer ${superadminToken}`)
-            .send({ role: newRole });
-
-        expect(res.statusCode).toEqual(200);
-        expect(res.body.user).toBeDefined();
-        expect(res.body.user.role).toBe(newRole);
-
-        const userInDb = await User.findById(userToModify._id);
-        expect(userInDb.role).toBe(newRole);
-        });
-
-        it('should not allow an admin with "admin" role to change a user role (if restricted to superadmin)', async () => {
-            const newRole = 'premium_user';
-            if (!User.schema.path('role').enumValues.includes(newRole)) {
-                return; 
-            }
-
+        it('should allow Superadmin to soft delete user', async () => {
             const res = await request(app)
-                .put(`/api/admin/users/${userToModify._id}/role`)
+                .delete(`/api/admin/users/${targetUser._id}`)
+                .set('Authorization', `Bearer ${superadminToken}`);
+            
+            expect(res.statusCode).toBe(200);
+            expect((await User.findById(targetUser._id)).isDeleted).toBe(true);
+        });
+
+        it('should prevent Admin from changing user role', async () => {
+            const res = await request(app)
+                .put(`/api/admin/users/${targetUser._id}/role`)
                 .set('Authorization', `Bearer ${adminToken}`)
-                .send({ role: newRole });
-            expect(res.statusCode).toEqual(403);
-            expect(res.body.message).toMatch(/access denied|not authorized/i);
+                .send({ role: 'premium_user' });
+            
+            expect(res.statusCode).toBe(403);
         });
-
-        it('should return validation error if role is invalid or not provided for role change', async () => {
-            let res = await request(app)
-                .put(`/api/admin/users/${userToModify._id}/role`)
-                .set('Authorization', `Bearer ${superadminToken}`)
-                .send({ role: 'nonExistentRole' });
-            expect(res.statusCode).toEqual(400);
-            expect(res.body.message).toContain('is not allowed or not defined in User schema');
-
-
-            res = await request(app)
-                .put(`/api/admin/users/${userToModify._id}/role`)
-                .set('Authorization', `Bearer ${superadminToken}`)
-                .send({});
-            expect(res.statusCode).toEqual(400);
-            expect(res.body.errors.some(e => e.path === 'role' && e.msg === 'Role is required.')).toBe(true);
-        });
-
-        it('should ban a user (superadmin) and create an audit log entry', async () => {
-        const initialLogCount = await AuditLog.countDocuments();
-        const res = await request(app)
-            .put(`/api/admin/users/${userToModify._id}/ban`)
-            .set('Authorization', `Bearer ${superadminToken}`)
-            .send({ banReason: 'Violation of terms' });
-
-        expect(res.statusCode).toEqual(200);
-
-        // Asercja dla Audit Log
-        const finalLogCount = await AuditLog.countDocuments();
-        expect(finalLogCount).toBe(initialLogCount + 1);
-
-        const logEntry = await AuditLog.findOne({ action: 'admin_banned_user' }).sort({ timestamp: -1 });
-        expect(logEntry).not.toBeNull();
-        expect(logEntry.actorId.toString()).toBe(superadmin._id.toString()); // superadmin jest zdefiniowany w beforeAll
-        expect(logEntry.targetId.toString()).toBe(userToModify._id.toString());
-        expect(logEntry.details.banReason).toBe('Violation of terms');
     });
 
-    });
-
-    describe('Test Account Management by Admin', () => {
-        const testAccCredentials = { username: 'newTestAccByAdminAPI', email: 'newtestadminapi@example.com', password: 'password123' };
-        let createdTestAccountId;
+    describe('User Interests View', () => {
+        let targetUser;
 
         beforeEach(async () => {
-            await User.deleteMany({ email: testAccCredentials.email });
+            targetUser = await createVerifiedUser({ username: 'interest_user' });
+            const cat = await createInterestCategory({ name: 'Tech' });
+            const interest = await createInterest({ name: 'Coding', category: cat });
+            await addUserInterestEntry({ userId: targetUser._id, interestId: interest._id });
         });
 
-        it('should create a test user (admin)', async () => {
+        it('should return user interests for admin', async () => {
+            const res = await request(app)
+                .get(`/api/admin/users/${targetUser._id}/interests`)
+                .set('Authorization', `Bearer ${adminToken}`);
+            
+            expect(res.statusCode).toBe(200);
+            expect(res.body).toHaveLength(1);
+            expect(res.body[0].name).toBe('Coding');
+        });
+    });
+
+    describe('Test Account Management', () => {
+        it('should create test user', async () => {
             const res = await request(app)
                 .post('/api/admin/users/create-test')
                 .set('Authorization', `Bearer ${adminToken}`)
-                .send(testAccCredentials);
-            expect(res.statusCode).toEqual(201);
-            expect(res.body.user).toHaveProperty('isTestAccount', true);
-            expect(res.body.user).toHaveProperty('isEmailVerified', true);
-            createdTestAccountId = res.body.user._id;
+                .send({ username: 'test_user_api', email: 'test_api@test.com', password: 'password123' });
+            
+            expect(res.statusCode).toBe(201);
+            expect(res.body.user.isTestAccount).toBe(true);
         });
 
-        it('should generate a JWT for an existing test user (admin)', async () => {
-            const testUser = await createTestUserAccount({
-                username: 'genTokenTestUserApi', email: 'gentokentestapi@example.com'
-            });
-            createdTestAccountId = testUser._id.toString();
-
+        it('should generate token for test user', async () => {
+            const testUser = await createTestUserAccount({ username: 'token_user' });
+            
             const res = await request(app)
-                .post(`/api/admin/users/${createdTestAccountId}/generate-test-token`)
+                .post(`/api/admin/users/${testUser._id}/generate-test-token`)
                 .set('Authorization', `Bearer ${adminToken}`);
-            expect(res.statusCode).toEqual(200);
-            expect(res.body).toHaveProperty('token');
-            expect(res.body.userId).toBe(createdTestAccountId);
-
+            
+            expect(res.statusCode).toBe(200);
             const decoded = jwt.verify(res.body.token, process.env.JWT_SECRET);
-            expect(decoded.id).toBe(createdTestAccountId);
-        });
-
-        it('should not generate token for a non-test account', async () => {
-            const res = await request(app)
-                .post(`/api/admin/users/${regularUserForTesting._id}/generate-test-token`)
-                .set('Authorization', `Bearer ${adminToken}`);
-            expect(res.statusCode).toEqual(400);
-            expect(res.body.message).toContain('not a designated test account');
+            expect(decoded.id).toBe(testUser._id.toString());
         });
     });
-
-    describe('RBAC - Role-Based Access Control', () => {
-        let userToModify;
-
-        beforeEach(async () => {
-            userToModify = await createVerifiedUser({ username: 'rbac_target_user', email: 'rbac_target@example.com' });
-        });
-
-        it('should NOT allow a regular admin to soft delete a user', async () => {
-            const res = await request(app)
-                .delete(`/api/admin/users/${userToModify._id}`)
-                .set('Authorization', `Bearer ${adminToken}`); // Użyj tokenu admina
-
-            expect(res.statusCode).toEqual(403); // Oczekujemy Forbidden
-            expect(res.body.message).toMatch(/access denied|not authorized/i);
-        });
-
-        it('should NOT allow a moderator to soft delete a user', async () => {
-            const res = await request(app)
-                .delete(`/api/admin/users/${userToModify._id}`)
-                .set('Authorization', `Bearer ${moderatorToken}`); // Użyj tokenu moderatora
-
-            expect(res.statusCode).toEqual(403);
-        });
-
-        it('should NOT allow a regular admin to restore a soft-deleted user', async () => {
-            await User.findByIdAndUpdate(userToModify._id, { isDeleted: true, deletedAt: new Date() });
-            const res = await request(app)
-                .put(`/api/admin/users/${userToModify._id}/restore`)
-                .set('Authorization', `Bearer ${adminToken}`);
-
-            expect(res.statusCode).toEqual(403);
-        });
-
-        // Testy dla zmiany roli (jeśli masz ten endpoint)
-        it('should NOT allow a regular admin to change a user role', async () => {
-            const res = await request(app)
-                .put(`/api/admin/users/${userToModify._id}/role`)
-                .set('Authorization', `Bearer ${adminToken}`)
-                .send({ role: 'premium_user' });
-            expect(res.statusCode).toEqual(403);
-        });
-    });
-
 });

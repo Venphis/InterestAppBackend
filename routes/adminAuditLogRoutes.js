@@ -5,29 +5,37 @@ const { protectAdmin, authorizeAdminRole } = require('../middleware/adminAuthMid
 
 const router = express.Router();
 
+// Apply global security middleware
 router.use(protectAdmin);
 router.use(authorizeAdminRole(['superadmin', 'admin']));
 
-const allowedLogLevels = ['info', 'warn', 'error', 'critical', 'admin_action'];
-const allowedActorTypes = ['user', 'admin', 'system'];
+const ALLOWED_LEVELS = ['info', 'warn', 'error', 'critical', 'admin_action'];
+const ALLOWED_ACTOR_TYPES = ['user', 'admin', 'system'];
 
-router.get('/', [
-    query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer.').toInt(),
-    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100.').toInt(),
-    query('level').optional().isIn(allowedLogLevels).withMessage(`Invalid log level. Allowed: ${allowedLogLevels.join(', ')}.`),
-    query('action').optional().isString().trim().escape().isLength({max: 100}).withMessage('Action query is too long (max 100 chars).'),
-    query('actorId').optional().isMongoId().withMessage('Invalid Actor ID format.'),
-    query('actorType').optional().isIn(allowedActorTypes).withMessage(`Invalid actor type. Allowed: ${allowedActorTypes.join(', ')}.`),
-    query('targetId').optional().isMongoId().withMessage('Invalid Target ID format.'),
-    query('targetType').optional().isString().trim().escape().isLength({max: 50}).withMessage('Target type query is too long (max 50 chars).'),
-    query('startDate').optional().isISO8601().toDate().withMessage('Invalid start date format (YYYY-MM-DD or ISO8601).'),
-    query('endDate').optional().isISO8601().toDate().withMessage('Invalid end date format (YYYY-MM-DD or ISO8601).')
-        .custom((value, { req }) => {
-            if (req.query.startDate && value && new Date(value) < new Date(req.query.startDate)) {
-                throw new Error('End date cannot be before start date.');
+// Validation rules for filtering audit logs
+const logQueryValidators = [
+    query('page').optional().isInt({ min: 1 }).toInt(),
+    query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
+    
+    query('level').optional().isIn(ALLOWED_LEVELS).withMessage(`Allowed levels: ${ALLOWED_LEVELS.join(', ')}`),
+    query('action').optional().trim().escape().isLength({ max: 100 }),
+    
+    query('actorId').optional().isMongoId(),
+    query('actorType').optional().isIn(ALLOWED_ACTOR_TYPES),
+    
+    query('targetId').optional().isMongoId(),
+    query('targetType').optional().trim().escape().isLength({ max: 50 }),
+    
+    query('startDate').optional().isISO8601().toDate(),
+    query('endDate').optional().isISO8601().toDate()
+        .custom((endDate, { req }) => {
+            if (req.query.startDate && endDate < new Date(req.query.startDate)) {
+                throw new Error('End date cannot precede start date');
             }
             return true;
         })
-], getAuditLogs);
+];
+
+router.get('/', logQueryValidators, getAuditLogs);
 
 module.exports = router;

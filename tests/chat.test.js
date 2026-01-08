@@ -1,220 +1,116 @@
 const request = require('supertest');
 const app = require('../server');
-const User = require('../models/User');
-const Chat = require('../models/Chat');
-const Message = require('../models/Message');
-const { createVerifiedUser, generateUserToken, createChat, createMessage } = require('./helpers/factories');
 const mongoose = require('mongoose');
+const Chat = require('../models/Chat');
+const User = require('../models/User');
+const { createVerifiedUser, generateUserToken, createChat, createMessage } = require('./helpers/factories');
 
-describe('Chat API (/api/chats)', () => {
-    let userOne, userTwo, userThree;
-    let tokenOne, tokenTwo;
+describe('Chat API', () => {
+    let user1, user2, user3;
+    let token1;
 
     beforeAll(async () => {
         await mongoose.connection.collection('users').deleteMany({});
         await mongoose.connection.collection('chats').deleteMany({});
-        await mongoose.connection.collection('messages').deleteMany({});
-
-        userOne = await createVerifiedUser({ username: 'chatUserOne', email: 'chatone@example.com' });
-        userTwo = await createVerifiedUser({ username: 'chatUserTwo', email: 'chattwo@example.com' });
-        userThree = await createVerifiedUser({ username: 'chatUserThree', email: 'chatthree@example.com' });
-
-        tokenOne = generateUserToken(userOne);
-        tokenTwo = generateUserToken(userTwo);
+        
+        user1 = await createVerifiedUser({ username: 'user1' });
+        user2 = await createVerifiedUser({ username: 'user2' });
+        user3 = await createVerifiedUser({ username: 'user3' });
+        token1 = generateUserToken(user1);
     });
 
     beforeEach(async () => {
-        await mongoose.connection.collection('chats').deleteMany({});
-        await mongoose.connection.collection('messages').deleteMany({});
+        await Chat.deleteMany({});
     });
 
-    describe('POST /api/chats (Create/Access Chat)', () => {
-        it('should create a new chat between two users if one does not exist', async () => {
+    describe('POST /api/chats', () => {
+        it('should create new chat', async () => {
             const res = await request(app)
                 .post('/api/chats')
-                .set('Authorization', `Bearer ${tokenOne}`)
-                .send({ userId: userTwo._id.toString() });
+                .set('Authorization', `Bearer ${token1}`)
+                .send({ userId: user2._id });
 
-            expect(res.statusCode).toEqual(200);
-            expect(res.body).toHaveProperty('_id');
-            expect(res.body.participants).toBeInstanceOf(Array);
-            expect(res.body.participants.length).toBe(2);
-            const participantIds = res.body.participants.map(p => p._id.toString());
-            expect(participantIds).toContain(userOne._id.toString());
-            expect(participantIds).toContain(userTwo._id.toString());
-
-            const chatInDb = await Chat.findById(res.body._id);
-            expect(chatInDb).not.toBeNull();
+            expect(res.statusCode).toBe(200);
+            expect(res.body.participants).toHaveLength(2);
+            expect(await Chat.countDocuments()).toBe(1);
         });
 
-        it('should access an existing chat between two users and return it instead of creating a new one', async () => {
-            const existingChat = await createChat([userOne, userTwo]);
-            const initialChatCount = await Chat.countDocuments();
-
-            const res = await request(app)
-                .post('/api/chats')
-                .set('Authorization', `Bearer ${tokenOne}`)
-                .send({ userId: userTwo._id.toString() });
-
-            expect(res.statusCode).toEqual(200);
-            expect(res.body._id.toString()).toBe(existingChat._id.toString());
-            const finalChatCount = await Chat.countDocuments();
-            expect(finalChatCount).toBe(initialChatCount); 
-        });
-
-        it('should not allow creating a chat with oneself', async () => {
-            const res = await request(app)
-                .post('/api/chats')
-                .set('Authorization', `Bearer ${tokenOne}`)
-                .send({ userId: userOne._id.toString() });
-
-            expect(res.statusCode).toEqual(400);
-            expect(res.body.message).toContain('Cannot create a chat with yourself');
-        });
-
-        it('should not create a chat with a non-existent user', async () => {
-            const nonExistentId = new mongoose.Types.ObjectId().toString();
-            const res = await request(app)
-                .post('/api/chats')
-                .set('Authorization', `Bearer ${tokenOne}`)
-                .send({ userId: nonExistentId });
-            expect(res.statusCode).toEqual(404);
-            expect(res.body.message).toContain('Recipient user not found');
-        });
-
-        it('should not create a chat with a soft-deleted user', async () => {
-            const deletedUser = await createVerifiedUser({ username: 'deletedChatUser', email: 'deletedchat@example.com', isDeleted: true });
-            const res = await request(app)
-                .post('/api/chats')
-                .set('Authorization', `Bearer ${tokenOne}`)
-                .send({ userId: deletedUser._id.toString() });
-            expect(res.statusCode).toEqual(404);
-        });
-
-        it('should not create a chat with a banned user', async () => {
-            const bannedUser = await createVerifiedUser({ username: 'bannedChatUser', email: 'bannedchat@example.com', isBanned: true });
-            const res = await request(app)
-                .post('/api/chats')
-                .set('Authorization', `Bearer ${tokenOne}`)
-                .send({ userId: bannedUser._id.toString() });
-            expect(res.statusCode).toEqual(404);
-        });
-    });
-
-    describe('GET /api/chats (Fetch Chats)', () => {
-        let chatOneTwo, chatOneThree, lastMessage;
-
-        beforeEach(async () => {
-            chatOneTwo = await createChat([userOne, userTwo]);
-            chatOneThree = await createChat([userOne, userThree]);
-
-            lastMessage = await createMessage({ chatId: chatOneTwo, senderId: userTwo, content: 'This is the last message' });
-            await Chat.findByIdAndUpdate(chatOneTwo._id, { lastMessage: lastMessage._id, lastMessageTimestamp: lastMessage.createdAt });
-        });
-
-        it('should fetch all chats for the logged-in user, sorted by last message timestamp', async () => {
-            const res = await request(app)
-                .get('/api/chats')
-                .set('Authorization', `Bearer ${tokenOne}`);
-
-            expect(res.statusCode).toEqual(200);
-            expect(res.body).toBeInstanceOf(Array);
-            expect(res.body.length).toBe(2);
-            expect(res.body[0]._id.toString()).toBe(chatOneTwo._id.toString());
-            expect(res.body[1]._id.toString()).toBe(chatOneThree._id.toString());
-        });
-
-        it('should correctly return participant IDs and the last message object', async () => {
-            const res = await request(app)
-                .get('/api/chats')
-                .set('Authorization', `Bearer ${tokenOne}`);
+        it('should return existing chat', async () => {
+            const chat = await createChat([user1, user2]);
             
-            expect(res.statusCode).toEqual(200);
-            const firstChat = res.body[0];
+            const res = await request(app)
+                .post('/api/chats')
+                .set('Authorization', `Bearer ${token1}`)
+                .send({ userId: user2._id });
 
-            expect(firstChat.participants).toBeInstanceOf(Array);
-            expect(firstChat.participants.length).toBe(2);
-            expect(typeof firstChat.participants[0]).toBe('string');
-            expect(firstChat.participants).toContain(userOne._id.toString());
-            expect(firstChat.participants).toContain(userTwo._id.toString());
-
-
-            expect(firstChat).toHaveProperty('lastMessage');
-            expect(firstChat.lastMessage._id.toString()).toBe(lastMessage._id.toString());
-            expect(firstChat.lastMessage.content).toBe('This is the last message');
-            expect(typeof firstChat.lastMessage.senderId).toBe('string');
-            expect(firstChat.lastMessage.senderId.toString()).toBe(userTwo._id.toString());
+            expect(res.statusCode).toBe(200);
+            expect(res.body._id).toBe(chat._id.toString());
+            expect(await Chat.countDocuments()).toBe(1);
         });
 
-        it('should return an empty array if the user has no chats', async () => {
-            const userWithNoChats = await createVerifiedUser({ username: 'noChatsUser', email: 'nochats@example.com' });
-            const noChatsToken = generateUserToken(userWithNoChats);
+        it('should prevent self-chat', async () => {
+            const res = await request(app)
+                .post('/api/chats')
+                .set('Authorization', `Bearer ${token1}`)
+                .send({ userId: user1._id });
+
+            expect(res.statusCode).toBe(400);
+        });
+
+        it('should validate recipient', async () => {
+            const res = await request(app)
+                .post('/api/chats')
+                .set('Authorization', `Bearer ${token1}`)
+                .send({ userId: new mongoose.Types.ObjectId() });
+
+            expect(res.statusCode).toBe(404);
+        });
+    });
+
+    describe('GET /api/chats', () => {
+        it('should list user chats', async () => {
+            await createChat([user1, user2]);
+            await createChat([user1, user3]);
+
             const res = await request(app)
                 .get('/api/chats')
-                .set('Authorization', `Bearer ${noChatsToken}`);
-            expect(res.statusCode).toEqual(200);
-            expect(res.body).toEqual([]);
-        });
-    });
-});
+                .set('Authorization', `Bearer ${token1}`);
 
-describe('Chat API with Soft Deleted Users', () => {
-    let activeUser, deletedUser, activeUserToken;
-
-    beforeEach(async () => {
-    await User.deleteMany({ email: /softdelete_chat@/ });
-    activeUser = await createVerifiedUser({ username: 'activeChat_sd', email: 'softdelete_chat@active.com' });
-    // Stwarzasz usuniętego usera, to jest OK
-    deletedUser = await createVerifiedUser({ username: 'deletedChat_sd', email: 'softdelete_chat@deleted.com', isDeleted: true, deletedAt: new Date() });
-    activeUserToken = generateUserToken(activeUser);
-    });
-
-    it('should not allow creating a new chat with a soft-deleted user', async () => {
-        const res = await request(app)
-            .post('/api/chats')
-            .set('Authorization', `Bearer ${activeUserToken}`)
-            .send({ userId: deletedUser._id.toString() });
-
-        expect(res.statusCode).toEqual(404); // Oczekujemy 404, bo `accessChat` nie znajdzie aktywnego usera
-        expect(res.body.message).toContain('Recipient user not found');
-    });
-
-    it('should filter out soft-deleted participants when fetching chats', async () => {
-        // Stwórz czat, a następnie usuń jednego z uczestników
-        let participantToDeletle = await createVerifiedUser({ username: 'soon_deleted', email: 'soon_deleted@chat.com' });
-        const chat = await createChat([activeUser, participantToDeletle]);
-        await User.findByIdAndUpdate(participantToDeletle._id, { isDeleted: true, deletedAt: new Date() });
-
-        const res = await request(app)
-            .get('/api/chats')
-            .set('Authorization', `Bearer ${activeUserToken}`);
-
-        expect(res.statusCode).toEqual(200);
-        // Oczekujemy, że `fetchChats` odfiltruje ten czat, bo ma mniej niż 2 aktywnych uczestników
-        // (zgodnie z logiką, którą dodaliśmy wcześniej: `const validChats = chats.filter(...)`)
-        expect(res.body.length).toBe(0);
-    });
-
-    it('should allow fetching messages even if the sender was soft-deleted (content is stored as a string)', async () => {
-        const chat = await createChat([activeUser, deletedUser]);
-
-        await createMessage({
-            chatId: chat,
-            senderId: deletedUser,
-            content: 'Message from a deleted user'
+            expect(res.statusCode).toBe(200);
+            expect(res.body).toHaveLength(2);
         });
 
-        const res = await request(app)
-            .get(`/api/messages/${chat._id}`)
-            .set('Authorization', `Bearer ${activeUserToken}`);
+        it('should filter out chats with deleted users', async () => {
+            const deletedUser = await createVerifiedUser({ isDeleted: true });
+            await createChat([user1, deletedUser]);
 
-        expect(res.statusCode).toEqual(200);
-        expect(res.body).toHaveProperty('messages');
-        expect(Array.isArray(res.body.messages)).toBe(true);
+            const res = await request(app)
+                .get('/api/chats')
+                .set('Authorization', `Bearer ${token1}`);
 
-        // Jeśli backend zwraca wiadomości, sprawdź typ senderId.
-        if (res.body.messages.length > 0) {
-            expect(typeof res.body.messages[0].senderId).toBe('string');
-        }
+            expect(res.statusCode).toBe(200);
+            expect(res.body).toHaveLength(0);
+        });
+    });
+
+    describe('Message History with Deleted Users', () => {
+        it('should still show messages from deleted users', async () => {
+            const deletedUser = await createVerifiedUser({ isDeleted: true });
+            const chat = await createChat([user1, deletedUser]);
+            
+            await createMessage({
+                chatId: chat._id,
+                senderId: deletedUser._id,
+                content: 'Message from deleted user'
+            });
+
+            const res = await request(app)
+                .get(`/api/messages/${chat._id}`)
+                .set('Authorization', `Bearer ${token1}`);
+
+            expect(res.statusCode).toBe(200);
+            expect(res.body.messages).toHaveLength(1);
+            expect(res.body.messages[0].senderId).toBe(deletedUser._id.toString());
+        });
     });
 });

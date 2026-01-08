@@ -11,38 +11,48 @@ const {
     blockFriendship,   
     unblockFriendship
 } = require('../controllers/friendshipController');
+
 const router = express.Router();
 
-router.use(protect); 
+router.use(protect);
 
-const friendshipIdValidation = [param('friendshipId').isMongoId().withMessage('Invalid Friendship ID format')];
-const allowedFriendshipTypes = ['friend', 'close_friend', 'acquaintance', 'family', 'work_colleague', 'romantic_partner', 'other'];
-const allowedFriendshipStatuses = ['pending', 'accepted', 'rejected', 'blocked'];
+const ALLOWED_STATUSES = ['pending', 'accepted', 'rejected', 'blocked'];
+const ALLOWED_TYPES = ['friend', 'close_friend', 'acquaintance', 'family', 'work_colleague', 'romantic_partner', 'other'];
 
+// --- Validation Rules ---
 
-router.get('/', [
-    query('status').optional().isIn(allowedFriendshipStatuses).withMessage(`Invalid status. Allowed: ${allowedFriendshipStatuses.join(', ')}`)
-], getFriendships);
+const idValidation = [
+    param('friendshipId').isMongoId().withMessage('Invalid ID format')
+];
 
-router.post('/request', [
+const requestValidation = [
     body('recipientId').isMongoId().withMessage('Invalid recipient ID'),
-    body('friendshipType').custom(value => {
-        if (value !== undefined) {
-          throw new Error('friendshipType cannot be set manually during request creation.');
-        }
+    body('friendshipType').custom(val => {
+        if (val !== undefined) throw new Error('Cannot set type manually');
         return true;
-      })
-], sendFriendRequest);
+    })
+];
 
-router.put('/:friendshipId/accept', [
-    ...friendshipIdValidation,
-    body('friendshipType').optional().isIn(allowedFriendshipTypes).withMessage(`Invalid friendship type. Allowed: ${allowedFriendshipTypes.join(', ')}`)
-], acceptFriendRequest);
+const queryValidation = [
+    query('status').optional().isIn(ALLOWED_STATUSES)
+];
 
-router.put('/:friendshipId/reject', friendshipIdValidation, rejectFriendRequest);
-router.delete('/:friendshipId', friendshipIdValidation, removeFriendship);
-router.put('/:friendshipId/verify', friendshipIdValidation, verifyFriendship);
-router.put('/:friendshipId/block', protect, friendshipIdValidation /*ewentualnie body, jeśli potrzebne*/, blockFriendship); // Zakładając, że masz blockFriendship
-router.put('/:friendshipId/unblock', protect, friendshipIdValidation, unblockFriendship);
+const acceptValidation = [
+    ...idValidation,
+    body('friendshipType').optional().isIn(ALLOWED_TYPES)
+];
+
+// --- Routes ---
+
+router.get('/', queryValidation, getFriendships);
+router.post('/request', requestValidation, sendFriendRequest);
+
+router.put('/:friendshipId/accept', acceptValidation, acceptFriendRequest);
+router.put('/:friendshipId/reject', idValidation, rejectFriendRequest);
+router.delete('/:friendshipId', idValidation, removeFriendship);
+
+router.put('/:friendshipId/verify', idValidation, verifyFriendship);
+router.put('/:friendshipId/block', idValidation, blockFriendship);
+router.put('/:friendshipId/unblock', idValidation, unblockFriendship);
 
 module.exports = router;

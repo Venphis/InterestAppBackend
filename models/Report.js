@@ -1,9 +1,15 @@
 const mongoose = require('mongoose');
 
 const ReportSchema = new mongoose.Schema({
-    reportedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    reportedUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, 
-    reportedMessage: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' }, 
+    reportedBy: { 
+        type: mongoose.Schema.Types.ObjectId, 
+        ref: 'User', 
+        required: true 
+    },
+    
+    // Target of the report (either User or Message)
+    reportedUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    reportedMessage: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
 
     reportType: {
         type: String,
@@ -12,10 +18,12 @@ const ReportSchema = new mongoose.Schema({
     },
     reason: {
         type: String,
-        required: [true, 'Reason for reporting is required'],
+        required: [true, 'Reason is required'],
         trim: true,
-        maxlength: [1000, 'Reason cannot be more than 1000 characters']
+        maxlength: [1000, 'Max 1000 chars']
     },
+    
+    // Admin processing fields
     status: {
         type: String,
         enum: ['pending', 'under_review', 'action_taken', 'no_action_needed', 'resolved_with_reporter'],
@@ -25,7 +33,7 @@ const ReportSchema = new mongoose.Schema({
         type: String,
         default: ''
     },
-    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'AdminUser' } 
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'AdminUser' }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Report', ReportSchema);

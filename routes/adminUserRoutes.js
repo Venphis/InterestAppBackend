@@ -2,60 +2,61 @@ const express = require('express');
 const { body, param, query } = require('express-validator');
 const {
     getAllUsers, getUserById, banUser, unbanUser, deleteUser, restoreUser,
-    manuallyVerifyEmail, createTestUser, generateTestUserToken,changeUserRole, getUserInterestsAdmin
+    manuallyVerifyEmail, createTestUser, generateTestUserToken, changeUserRole, getUserInterestsAdmin
 } = require('../controllers/adminUsersController');
 const { protectAdmin, authorizeAdminRole } = require('../middleware/adminAuthMiddleware');
-const router = express.Router();
 
+const router = express.Router();
 router.use(protectAdmin);
 
-router.get('/', authorizeAdminRole(['admin', 'superadmin', 'moderator']), [
+// --- Validation Rules ---
+
+const userIdValidation = [param('userId').isMongoId().withMessage('Invalid User ID')];
+
+const userQueryValidation = [
     query('page').optional().isInt({ min: 1 }).toInt(),
     query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
-    query('username').optional().isString().trim().escape(),
-    query('email').optional().isString().trim().escape(),
+    query('username').optional().trim().escape(),
+    query('email').optional().trim().escape(),
     query('isBanned').optional().isBoolean().toBoolean(),
-    query('isEmailVerified').optional().isBoolean().toBoolean(),
-    query('isTestAccount').optional().isBoolean().toBoolean(),
     query('showDeleted').optional().isIn(['true', 'only', 'false'])
-], getAllUsers);
+];
 
-router.post('/create-test', authorizeAdminRole(['admin', 'superadmin']), [
-    body('username').trim().notEmpty().withMessage('Username is required').isLength({ min: 3, max: 30 }),
-    body('email').isEmail().withMessage('Valid email is required').normalizeEmail(),
-    body('password').isLength({ min: 6, max: 100 }).withMessage('Password is required and must be between 6-100 chars')
-], createTestUser);
+const createTestUserValidation = [
+    body('username').trim().notEmpty().isLength({ min: 3, max: 30 }),
+    body('email').isEmail().normalizeEmail(),
+    body('password').isLength({ min: 6, max: 100 })
+];
 
-const userIdValidation = [param('userId').isMongoId().withMessage('Invalid User ID format')];
-
-router.get('/:userId', authorizeAdminRole(['admin', 'superadmin', 'moderator']), userIdValidation, getUserById);
-
-router.put('/:userId/ban', authorizeAdminRole(['admin', 'superadmin']), [
+const banValidation = [
     ...userIdValidation,
-    body('banReason').trim().notEmpty().withMessage('Ban reason is required').isLength({ max: 500 }).escape()
-], banUser);
+    body('banReason').trim().notEmpty().isLength({ max: 500 }).escape()
+];
 
+const roleChangeValidation = [
+    ...userIdValidation,
+    body('role').trim().notEmpty()
+];
+
+// --- Routes ---
+
+router.get('/', authorizeAdminRole(['admin', 'superadmin', 'moderator']), userQueryValidation, getAllUsers);
+
+router.post('/create-test', authorizeAdminRole(['admin', 'superadmin']), createTestUserValidation, createTestUser);
+
+router.route('/:userId')
+    .get(authorizeAdminRole(['admin', 'superadmin', 'moderator']), userIdValidation, getUserById)
+    .delete(authorizeAdminRole(['superadmin']), userIdValidation, deleteUser);
+
+// User Actions
+router.put('/:userId/ban', authorizeAdminRole(['admin', 'superadmin']), banValidation, banUser);
 router.put('/:userId/unban', authorizeAdminRole(['admin', 'superadmin']), userIdValidation, unbanUser);
-router.delete('/:userId', authorizeAdminRole(['superadmin']), userIdValidation, deleteUser);
 router.put('/:userId/restore', authorizeAdminRole(['superadmin']), userIdValidation, restoreUser);
 router.put('/:userId/verify-email', authorizeAdminRole(['admin', 'superadmin']), userIdValidation, manuallyVerifyEmail);
+router.put('/:userId/role', authorizeAdminRole(['superadmin']), roleChangeValidation, changeUserRole);
+
+// Sub-resources
 router.post('/:userId/generate-test-token', authorizeAdminRole(['admin', 'superadmin']), userIdValidation, generateTestUserToken);
-
-router.put( 
-  '/:userId/role',
-  authorizeAdminRole(['superadmin']),
-  [
-    ...userIdValidation, 
-    body('role').trim().notEmpty().withMessage('Role is required.')
-  ],
-  changeUserRole
-);
-
-router.get('/:userId/interests',
-    authorizeAdminRole(['admin', 'superadmin', 'moderator']), // Moderator też powinien móc widzieć
-    userIdValidation,
-    getUserInterestsAdmin
-);
-
+router.get('/:userId/interests', authorizeAdminRole(['admin', 'superadmin', 'moderator']), userIdValidation, getUserInterestsAdmin);
 
 module.exports = router;

@@ -2,92 +2,98 @@ const express = require('express');
 const { body, param, query } = require('express-validator');
 const mongoose = require('mongoose');
 const {
-    createInterestCategory, getAllInterestCategories, updateInterestCategory, deleteInterestCategory,upsertInterestCategoryTranslation,
-upsertInterestTranslation, createInterest, getAllInterestsAdmin,getInterestByIdAdmin, updateInterest, archiveInterest, restoreInterest
+    createInterestCategory, getAllInterestCategories, updateInterestCategory, deleteInterestCategory,
+    upsertInterestCategoryTranslation, upsertInterestTranslation, 
+    createInterest, getAllInterestsAdmin, getInterestByIdAdmin, updateInterest, archiveInterest, restoreInterest
 } = require('../controllers/adminInterestsController');
 const { protectAdmin, authorizeAdminRole } = require('../middleware/adminAuthMiddleware');
 
 const router = express.Router();
 router.use(protectAdmin);
 
-const categoryIdValidation = [param('categoryId').isMongoId().withMessage('Invalid Category ID format.')];
-const interestIdValidation = [param('interestId').isMongoId().withMessage('Invalid Interest ID format.')];
-const langValidation = [
-  param('lang')
+// --- Validation Rules ---
+
+const idValidation = (field) => param(field).isMongoId().withMessage(`Invalid ${field} format`);
+
+const langValidation = param('lang')
     .trim()
     .matches(/^[a-z]{2,3}(-[a-z]{2})?$/i)
-    .withMessage('Invalid language code. Example: en, de, en-us'),
+    .withMessage('Invalid language code');
+
+const categoryBodyValidation = [
+    body('name').trim().isLength({ min: 1, max: 100 }).escape(),
+    body('description').optional({ checkFalsy: true }).trim().isLength({ max: 500 }).escape()
 ];
 
+const interestBodyValidation = [
+    body('name').trim().isLength({ min: 1, max: 100 }).escape(),
+    body('categoryId').optional({ checkFalsy: true }).custom(val => {
+        if (!val) return true;
+        if (!mongoose.Types.ObjectId.isValid(val)) throw new Error('Invalid Category ID');
+        return true;
+    }),
+    body('description').optional({ checkFalsy: true }).trim().isLength({ max: 500 }).escape()
+];
+
+const queryValidation = [
+    query('page').optional().isInt({ min: 1 }).toInt(),
+    query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
+    query('categoryId').optional().isMongoId(),
+    query('name').optional().trim().escape(),
+    query('showArchived').optional().isBoolean().toBoolean()
+];
+
+// --- Routes: Categories ---
 
 router.route('/categories')
-    .post(authorizeAdminRole(['admin', 'superadmin']), [
-        body('name').trim().notEmpty().withMessage('Category name is required.').isLength({min: 1, max: 100}).withMessage('Category name must be 1-100 characters.').escape(),
-        body('description').optional({checkFalsy: true}).trim().isLength({max: 500}).withMessage('Category description max 500 chars.').escape()
-    ], createInterestCategory)
+    .post(
+        authorizeAdminRole(['admin', 'superadmin']), 
+        [body('name').notEmpty(), ...categoryBodyValidation], 
+        createInterestCategory
+    )
     .get(authorizeAdminRole(['admin', 'superadmin', 'moderator']), getAllInterestCategories);
 
 router.route('/categories/:categoryId')
-    .put(authorizeAdminRole(['admin', 'superadmin']), [
-        ...categoryIdValidation,
-        body('name').optional({checkFalsy: true}).trim().isLength({min: 1, max: 100}).withMessage('Category name must be 1-100 characters.').escape(),
-        body('description').optional({checkFalsy: true}).trim().isLength({max: 500}).withMessage('Category description max 500 chars.').escape()
-    ], updateInterestCategory)
-    .delete(authorizeAdminRole(['superadmin']), categoryIdValidation, deleteInterestCategory);
-
-router.route('/')
-    .post(authorizeAdminRole(['admin', 'superadmin']), [
-        body('name').trim().notEmpty().withMessage('Interest name is required.').isLength({min: 1, max: 100}).withMessage('Interest name must be 1-100 characters.').escape(),
-        body('categoryId').optional({checkFalsy: true}).isMongoId().withMessage('Invalid Category ID format for interest.'),
-        body('description').optional({checkFalsy: true}).trim().isLength({max: 500}).withMessage('Interest description max 500 chars.').escape()
-    ], createInterest)
-    .get(authorizeAdminRole(['admin', 'superadmin', 'moderator']), [
-        query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer.').toInt(),
-        query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100.').toInt(),
-        query('categoryId').optional().isMongoId().withMessage('Invalid Category ID format for filter.'),
-        query('name').optional().isString().trim().escape().isLength({max:100}).withMessage('Name filter too long.'),
-        query('showArchived').optional().isBoolean().withMessage('showArchived must be a boolean.').toBoolean()
-    ], getAllInterestsAdmin);
-
-router.route('/:interestId')
-    .get(authorizeAdminRole(['admin', 'superadmin', 'moderator']), interestIdValidation, getInterestByIdAdmin)
-    .put(authorizeAdminRole(['admin', 'superadmin']), [
-        ...interestIdValidation,
-        body('name').optional({checkFalsy: true}).trim().isLength({min:1, max: 100}).withMessage('Interest name must be 1-100 characters.').escape(),
-        body('categoryId').optional({checkFalsy: true}).custom((value) => {
-            if (value === '' || value === null) return true;
-            if (!mongoose.Types.ObjectId.isValid(value)) throw new Error('Invalid Category ID format provided.'); 
-            return true;
-        }).withMessage('Invalid Category ID format for interest update.'),
-        body('description').optional({checkFalsy: true}).trim().isLength({max: 500}).withMessage('Interest description max 500 chars.').escape(),
-        body('isArchived').optional().isBoolean().withMessage('isArchived must be a boolean.').toBoolean()
-    ], updateInterest)
-    .delete(authorizeAdminRole(['admin', 'superadmin']), interestIdValidation, archiveInterest);
-
-router.put('/:interestId/restore', authorizeAdminRole(['admin', 'superadmin']), interestIdValidation, restoreInterest);
+    .put(
+        authorizeAdminRole(['admin', 'superadmin']), 
+        [idValidation('categoryId'), ...categoryBodyValidation], 
+        updateInterestCategory
+    )
+    .delete(authorizeAdminRole(['superadmin']), idValidation('categoryId'), deleteInterestCategory);
 
 router.patch(
-  '/categories/:categoryId/translations/:lang',
-  authorizeAdminRole(['admin', 'superadmin']),
-  [
-    ...categoryIdValidation,
-    ...langValidation,
-    body('name').trim().notEmpty().withMessage('Translation name is required.').isLength({ min: 1, max: 100 }).escape(),
-    body('description').optional({ checkFalsy: true }).trim().isLength({ max: 500 }).escape(),
-  ],
-  upsertInterestCategoryTranslation
+    '/categories/:categoryId/translations/:lang',
+    authorizeAdminRole(['admin', 'superadmin']),
+    [idValidation('categoryId'), langValidation, body('name').notEmpty(), ...categoryBodyValidation],
+    upsertInterestCategoryTranslation
 );
 
+// --- Routes: Interests ---
+
+router.route('/')
+    .post(
+        authorizeAdminRole(['admin', 'superadmin']), 
+        [body('name').notEmpty(), ...interestBodyValidation], 
+        createInterest
+    )
+    .get(authorizeAdminRole(['admin', 'superadmin', 'moderator']), queryValidation, getAllInterestsAdmin);
+
+router.route('/:interestId')
+    .get(authorizeAdminRole(['admin', 'superadmin', 'moderator']), idValidation('interestId'), getInterestByIdAdmin)
+    .put(
+        authorizeAdminRole(['admin', 'superadmin']), 
+        [idValidation('interestId'), ...interestBodyValidation, body('isArchived').optional().isBoolean().toBoolean()], 
+        updateInterest
+    )
+    .delete(authorizeAdminRole(['admin', 'superadmin']), idValidation('interestId'), archiveInterest);
+
+router.put('/:interestId/restore', authorizeAdminRole(['admin', 'superadmin']), idValidation('interestId'), restoreInterest);
+
 router.patch(
-  '/:interestId/translations/:lang',
-  authorizeAdminRole(['admin', 'superadmin']),
-  [
-    ...interestIdValidation,
-    ...langValidation,
-    body('name').trim().notEmpty().withMessage('Translation name is required.').isLength({ min: 1, max: 100 }).escape(),
-    body('description').optional({ checkFalsy: true }).trim().isLength({ max: 500 }).escape(),
-  ],
-  upsertInterestTranslation
+    '/:interestId/translations/:lang',
+    authorizeAdminRole(['admin', 'superadmin']),
+    [idValidation('interestId'), langValidation, body('name').notEmpty(), ...interestBodyValidation],
+    upsertInterestTranslation
 );
 
 module.exports = router;

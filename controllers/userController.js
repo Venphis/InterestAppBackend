@@ -1,355 +1,230 @@
 const User = require('../models/User');
 const UserInterest = require('../models/UserInterest');
-const Interest = require('../models/Interest'); 
+const Interest = require('../models/Interest');
 const fs = require('fs');
 const path = require('path');
 const { validationResult } = require('express-validator');
 const mongoose = require('mongoose');
 
-// @desc    Get current user profile (optionally populated)
-// @route   GET /api/users/profile
-// @access  Private
-const getUserProfile = async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
-  try {
-    const userInterests = await UserInterest.find({ userId: req.user._id })
-                                            .populate('interestId', 'name category');
-
-    res.json({
-        ...req.user.toObject(), 
-        interests: userInterests.map(ui => ({ 
-            userInterestId: ui._id, 
-            interest: ui.interestId,
-            customDescription: ui.customDescription
-        }))
-    });
-  } catch (error) {
-    console.error(`[userController.js] ERROR in getUserProfile for user ${req.user ? req.user._id : 'UNKNOWN'}:`, error);
-        next(error);
-  }
-};
-
-// @desc    Update user profile
-// @route   PUT /api/users/profile
-// @access  Private
-const updateUserProfile = async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+// Retrieve detailed profile for authenticated user
+const getUserProfile = async (req, res, next) => {
     try {
-        const user = await User.findById(req.user._id);
-        if (!user) return res.status(404).json({ message: 'User not found' });
+        const userInterests = await UserInterest.find({ userId: req.user._id })
+            .populate('interestId', 'name category');
 
-        const profileUpdates = req.body.profile || {};
-        user.profile.displayName = profileUpdates.displayName || user.profile.displayName;
-        user.profile.gender = profileUpdates.gender || user.profile.gender;
-        user.profile.birthDate = profileUpdates.birthDate || user.profile.birthDate;
-        user.profile.location = profileUpdates.location || user.profile.location;
-        user.profile.bio = profileUpdates.bio || user.profile.bio;
-        user.profile.broadcastMessage = profileUpdates.broadcastMessage || user.profile.broadcastMessage;
-
-        const updatedUser = await user.save();
-        const userInterests = await UserInterest.find({ userId: updatedUser._id }).populate('interestId', 'name category');
         res.json({
-            ...updatedUser.toObject({ virtuals: true }), 
-             interests: userInterests.map(ui => ({
+            ...req.user.toObject(),
+            interests: userInterests.map(ui => ({
                 userInterestId: ui._id,
                 interest: ui.interestId,
                 customDescription: ui.customDescription
             }))
         });
     } catch (error) {
-         console.error('Update Profile Error:', error);
-         if (error.name === 'ValidationError') {
-             const messages = Object.values(error.errors).map(val => val.message);
-             return res.status(400).json({ message: messages.join(', ') });
-         }
-         if (error.code === 11000) {
-             return res.status(400).json({ message: 'Username or Email already taken' });
-         }
-         res.status(500).json({ message: 'Server Error updating profile' });
+        next(error);
     }
 };
 
-// @desc    Soft delete own account
-// @route   DELETE /api/users/profile
-// @access  Private
-const deleteOwnAccount = async (req, res, next) => {
-  try {
-    const user = await User.findById(req.user._id);
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
-    if (user.isDeleted) {
-      return res.status(400).json({ message: 'Account is already deleted.' });
-    }
-
-    // opcjonalnie usuń avatar z dysku (jeśli masz pliki lokalnie)
-    if (user.profile?.avatarUrl) {
-      const avatarPath = path.join(__dirname, '..', user.profile.avatarUrl.replace(/^\//, ''));
-      if (fs.existsSync(avatarPath)) {
-        fs.unlink(avatarPath, () => {});
-      }
-    }
-
-    // wyczyść zależne dane (minimum: zainteresowania profilu)
-    await UserInterest.deleteMany({ userId: user._id });
-
-    user.isDeleted = true;
-    user.deletedAt = new Date();
-
-    // nie zmieniamy email/username (jak w admin soft-delete), żeby nie rozwalać walidacji
-    await user.save({ validateBeforeSave: false });
-
-    return res.status(200).json({ message: 'Account deleted successfully.' });
-  } catch (error) {
-    console.error('[userController] Delete Own Account Error:', error);
-    next(error);
-  }
-};
-
-
-// @desc    Find users by username, display name, or ID
-// @route   GET /api/users/search?q=...
-// @access  Private
-const findUsers = async (req, res, next) => {
+// Update user profile fields
+const updateUserProfile = async (req, res, next) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        const updates = req.body.profile || {};
+        const fields = ['displayName', 'gender', 'birthDate', 'location', 'bio', 'broadcastMessage'];
+        
+        fields.forEach(field => {
+            if (updates[field] !== undefined) user.profile[field] = updates[field];
+        });
+
+        const updatedUser = await user.save();
+        const userInterests = await UserInterest.find({ userId: updatedUser._id }).populate('interestId', 'name category');
+
+        res.json({
+            ...updatedUser.toObject({ virtuals: true }),
+            interests: userInterests.map(ui => ({
+                userInterestId: ui._id,
+                interest: ui.interestId,
+                customDescription: ui.customDescription
+            }))
+        });
+    } catch (error) {
+        if (error.code === 11000) return res.status(400).json({ message: 'Conflict detected' });
+        next(error);
     }
+};
 
+// Self-deletion of user account
+const deleteOwnAccount = async (req, res, next) => {
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+        if (user.isDeleted) return res.status(400).json({ message: 'Already deleted' });
+
+        // Cleanup Avatar if exists
+        if (user.profile?.avatarUrl) {
+            const avatarPath = path.join(__dirname, '..', user.profile.avatarUrl.replace(/^\//, ''));
+            if (fs.existsSync(avatarPath)) {
+                fs.unlink(avatarPath, () => {});
+            }
+        }
+
+        await UserInterest.deleteMany({ userId: user._id });
+
+        user.isDeleted = true;
+        user.deletedAt = new Date();
+        await user.save({ validateBeforeSave: false });
+
+        res.status(200).json({ message: 'Account deleted' });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// Search for users
+const findUsers = async (req, res, next) => {
     const queryParam = req.query.q;
-
     const isObjectId = mongoose.Types.ObjectId.isValid(queryParam);
 
     try {
-        let users;
+        const query = {
+            _id: { $ne: req.user._id },
+            isDeleted: false,
+            isBanned: false
+        };
 
         if (isObjectId) {
-            users = await User.findOne({
-                _id: queryParam,
-                _id: { $ne: req.user._id }, // exclude self
-                isDeleted: false,
-                isBanned: false
-            }).select('username email profile');
-
-            users = users ? [users] : [];
+            query._id = queryParam; 
         } else {
-            const keywordConditions = [
+            query.$or = [
                 { username: { $regex: queryParam, $options: 'i' } },
                 { 'profile.displayName': { $regex: queryParam, $options: 'i' } }
             ];
-
-            users = await User.find({
-                $or: keywordConditions,
-                _id: { $ne: req.user._id },
-                isDeleted: false,
-                isBanned: false
-            }).select('username email profile');
         }
 
+        const users = await User.find(query).select('username email profile');
         res.json(users);
     } catch (error) {
-        console.error('[userController.js] Search Users Error:', error);
-        next(error); 
+        next(error);
     }
 };
 
-
-// @desc    fetch a single user by id
-// @route   GET /api/users/:id
-// @access  Private
+// Get public profile of another user
 const getUserById = async (req, res, next) => {
-  // --- OBSŁUGA WALIDACJI NA SAMYM POCZĄTKU ---
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
-  // ------------------------------------------
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-  const userId = req.params.id; // Zmień na `id` zgodnie z definicją trasy
+    try {
+        const user = await User.findOne({
+            _id: req.params.id,
+            isDeleted: false,
+            isBanned: false
+        }).select('username email profile');
 
-  try {
-    // Logika wyszukiwania użytkownika (bez zmian)
-    const user = await User.findOne({
-      _id: userId,
-      isDeleted: false,
-      isBanned: false
-    }).select('username email profile');
+        if (!user) return res.status(404).json({ message: 'User not found' });
 
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+        const userInterests = await UserInterest.find({ userId: user._id })
+            .populate('interestId', 'name category');
+
+        res.json({
+            ...user.toObject(),
+            interests: userInterests.map(ui => ({
+                userInterestId: ui._id,
+                interest: ui.interestId,
+                customDescription: ui.customDescription
+            }))
+        });
+    } catch (error) {
+        next(error);
     }
-
-    const userInterests = await UserInterest.find({ userId: userId })
-      .populate('interestId', 'name category');
-
-    res.json({
-      ...user.toObject(),
-      interests: userInterests.map(ui => ({
-        userInterestId: ui._id,
-        interest: ui.interestId,
-        customDescription: ui.customDescription
-      }))
-    });
-  } catch (error) {
-    // Ten blok 'catch' nie powinien już łapać CastError, bo walidator go zatrzyma.
-    // Będzie łapał inne, nieoczekiwane błędy bazy danych.
-    console.error('[userController.js] Get User by ID Error:', error);
-    next(error);
-  }
 };
 
+// --- Interest Management ---
 
-// --- Kontrolery Zainteresowań Użytkownika ---
-
-
-// @desc    Add an interest to the logged-in user's profile
-// @route   POST /api/users/profile/interests
-// @access  Private
-const addUserInterest = async (req, res, next) => { // Dodaj next
+const addUserInterest = async (req, res, next) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
     const { interestId, customDescription } = req.body;
     const userId = req.user._id;
 
     try {
         const interest = await Interest.findById(interestId);
-        if (!interest) {
-            return res.status(404).json({ message: 'Interest not found' });
-        }
-        if (interest.isArchived) {
-            return res.status(400).json({ message: 'Cannot add an archived interest' });
-        }
-        const existingUserInterest = await UserInterest.findOne({ userId, interestId });
-        if (existingUserInterest) {
-            return res.status(400).json({ message: 'Interest already added to profile' });
-        }
+        if (!interest) return res.status(404).json({ message: 'Interest not found' });
+        if (interest.isArchived) return res.status(400).json({ message: 'Interest archived' });
+
+        const exists = await UserInterest.exists({ userId, interestId });
+        if (exists) return res.status(400).json({ message: 'Already added' });
+
         const newUserInterest = await UserInterest.create({
             userId,
             interestId,
             customDescription: customDescription || ''
         });
 
-        const populatedInterest = await UserInterest.findById(newUserInterest._id)
-                                                  .populate('interestId', 'name category isArchived');
-
-        res.status(201).json(populatedInterest.toObject()); 
-
+        const populated = await UserInterest.findById(newUserInterest._id).populate('interestId', 'name category isArchived');
+        res.status(201).json(populated);
     } catch (error) {
-        console.error('[userController] Add User Interest Error:', error);
-         if (error.code === 11000) {
-             return res.status(400).json({ message: 'Interest already added to profile (database constraint).' });
-         }
-        next(error); 
+        if (error.code === 11000) return res.status(400).json({ message: 'Duplicate interest' });
+        next(error);
     }
 };
 
-// @desc    Update custom description for a user interest
-// @route   PUT /api/users/profile/interests/:userInterestId
-// @access  Private
-const updateUserInterest = async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
-    const { userInterestId } = req.params;
+const updateUserInterest = async (req, res, next) => {
     const { customDescription } = req.body;
-    const userId = req.user._id;
-
-    if (customDescription === undefined) { 
-         return res.status(400).json({ message: 'customDescription is required in body' });
-    }
+    if (customDescription === undefined) return res.status(400).json({ message: 'Description required' });
 
     try {
-        const userInterest = await UserInterest.findOne({ _id: userInterestId, userId: userId });
-
-        if (!userInterest) {
-            return res.status(404).json({ message: 'Interest not found on user profile or you do not have permission' });
-        }
+        const userInterest = await UserInterest.findOne({ _id: req.params.userInterestId, userId: req.user._id });
+        if (!userInterest) return res.status(404).json({ message: 'Interest not found' });
 
         userInterest.customDescription = customDescription;
         await userInterest.save();
 
-         const populatedInterest = await UserInterest.findById(userInterest._id)
-                                                  .populate('interestId', 'name category');
-
-
+        const populated = await UserInterest.findById(userInterest._id).populate('interestId', 'name category');
+        
         res.json({
-            userInterestId: populatedInterest._id,
-            interest: populatedInterest.interestId,
-            customDescription: populatedInterest.customDescription
+            userInterestId: populated._id,
+            interest: populated.interestId,
+            customDescription: populated.customDescription
         });
-
     } catch (error) {
-        console.error('Update User Interest Error:', error);
-        res.status(500).json({ message: 'Server Error updating interest description' });
+        next(error);
     }
 };
 
-// @desc    Remove an interest from the logged-in user's profile
-// @route   DELETE /api/users/profile/interests/:userInterestId
-// @access  Private
-const removeUserInterest = async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
-    const { userInterestId } = req.params;
-    const userId = req.user._id;
-
+const removeUserInterest = async (req, res, next) => {
     try {
-        const userInterest = await UserInterest.findOne({ _id: userInterestId, userId: userId });
+        const result = await UserInterest.deleteOne({ _id: req.params.userInterestId, userId: req.user._id });
+        if (result.deletedCount === 0) return res.status(404).json({ message: 'Interest not found' });
 
-        if (!userInterest) {
-            return res.status(404).json({ message: 'Interest not found on user profile or you do not have permission' });
-        }
-
-        await userInterest.deleteOne(); 
-
-        res.status(200).json({ message: 'Interest removed successfully' });
-
+        res.json({ message: 'Removed' });
     } catch (error) {
-        console.error('Remove User Interest Error:', error);
-        res.status(500).json({ message: 'Server Error removing interest' });
+        next(error);
     }
 };
 
+// --- Avatar Management ---
 
-// @desc    Update user avatar
-// @route   PUT /api/users/profile/avatar
-// @access  Private
-const updateUserAvatar = async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
-    if (!req.file) { 
-        return res.status(400).json({ message: 'No avatar image file uploaded.' });
-    }
+const updateUserAvatar = async (req, res, next) => {
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded' });
 
     try {
         const user = await User.findById(req.user._id);
         if (!user) {
-            fs.unlink(req.file.path, (err) => { if (err) console.error("Error deleting orphaned avatar:", err); });
-            return res.status(404).json({ message: 'User not found.' });
+            // Cleanup orphan file
+            fs.unlink(req.file.path, () => {});
+            return res.status(404).json({ message: 'User not found' });
         }
 
-        if (user.profile.avatarUrl && !user.profile.avatarUrl.includes('default')) { 
-            const oldAvatarPathName = user.profile.avatarUrl.split('/public/')[1];
-            if (oldAvatarPathName) {
-                const oldAvatarFullPath = path.join(__dirname, '..', 'public', oldAvatarPathName);
-                 if (fs.existsSync(oldAvatarFullPath)) {
-                    fs.unlink(oldAvatarFullPath, (err) => {
-                        if (err) console.error("Error deleting old avatar:", err);
-                    });
-                }
-            }
+        // Remove old avatar if custom
+        if (user.profile.avatarUrl && !user.profile.avatarUrl.includes('default')) {
+            const oldPath = path.join(__dirname, '..', 'public', user.profile.avatarUrl.replace('/public/', ''));
+            if (fs.existsSync(oldPath)) fs.unlink(oldPath, () => {});
         }
 
         const relativePath = `/public/uploads/avatars/${req.file.filename}`;
@@ -357,31 +232,25 @@ const updateUserAvatar = async (req, res) => {
         await user.save();
 
         res.json({
-            message: 'Avatar updated successfully.',
-            avatarUrl: relativePath, 
-            user: { 
-                _id: user._id,
-                username: user.username,
-                profile: user.profile
-            }
+            message: 'Avatar updated',
+            avatarUrl: relativePath,
+            user: { _id: user._id, username: user.username, profile: user.profile }
         });
-
     } catch (error) {
-        console.error('Update Avatar Error:', error);
-        fs.unlink(req.file.path, (err) => { if (err) console.error("Error deleting uploaded avatar on DB error:", err); });
-        res.status(500).json({ message: 'Server error updating avatar.' });
+        // Cleanup uploaded file on error
+        fs.unlink(req.file.path, () => {});
+        next(error);
     }
 };
-
 
 module.exports = {
     getUserProfile,
     updateUserProfile,
     deleteOwnAccount,
     findUsers,
-    addUserInterest, 
-    updateUserInterest, 
-    removeUserInterest, 
-    updateUserAvatar,
-    getUserById
+    getUserById,
+    addUserInterest,
+    updateUserInterest,
+    removeUserInterest,
+    updateUserAvatar
 };

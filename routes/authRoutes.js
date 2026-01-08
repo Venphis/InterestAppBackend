@@ -8,38 +8,44 @@ const {
     forgotPassword, 
     resetPassword 
 } = require('../controllers/authController');
+
 const router = express.Router();
 
-router.post('/register', [
-    body('username').trim().notEmpty().withMessage('Username is required').isLength({ min: 3, max: 30 }).withMessage('Username must be between 3 and 30 characters'),
-    body('email').isEmail().withMessage('Please provide a valid email').normalizeEmail(),
-    body('password').isLength({ min: 6, max: 100 }).withMessage('Password must be between 6 and 100 characters')
-], registerUser);
+// --- Validation Rules ---
 
-router.post('/login', [
-    body('email').isEmail().withMessage('Valid email is required').normalizeEmail(),
-    body('password').notEmpty().withMessage('Password is required')
-], loginUser);
+const registerValidation = [
+    body('username').trim().notEmpty().isLength({ min: 3, max: 30 }).withMessage('Username: 3-30 chars'),
+    body('email').isEmail().normalizeEmail().withMessage('Invalid email'),
+    body('password').isLength({ min: 6, max: 100 }).withMessage('Password: 6-100 chars')
+];
 
-router.get('/verify-email/:token', [
-    param('token')
-        .isHexadecimal().withMessage('Token must be hexadecimal')
-        .isLength({ min: 64, max: 64 }).withMessage('Token must be 64 characters long') 
-], verifyEmail);
+const loginValidation = [
+    body('email').isEmail().normalizeEmail().withMessage('Invalid email'),
+    body('password').notEmpty().withMessage('Password required')
+];
 
-router.post('/resend-verification-email', [
-    body('email').isEmail().withMessage('Valid email is required').normalizeEmail()
-], resendVerificationEmail);
+const emailValidation = [
+    body('email').isEmail().normalizeEmail().withMessage('Invalid email')
+];
 
-router.post('/forgot-password', [
-    body('email').isEmail().withMessage('Valid email is required').normalizeEmail()
-], forgotPassword);
+const tokenValidation = [
+    param('token').isHexadecimal().isLength({ min: 64, max: 64 }).withMessage('Invalid token format')
+];
 
-router.put('/reset-password/:token', [
-    param('token')
-        .isHexadecimal().withMessage('Token must be hexadecimal')
-        .isLength({ min: 64, max: 64 }).withMessage('Token must be 64 characters long'), 
-    body('password').isLength({ min: 6, max: 100 }).withMessage('Password must be between 6 and 100 characters')
-], resetPassword);
+const resetPasswordValidation = [
+    ...tokenValidation,
+    body('password').isLength({ min: 6, max: 100 }).withMessage('Password: 6-100 chars')
+];
+
+// --- Routes ---
+
+router.post('/register', registerValidation, registerUser);
+router.post('/login', loginValidation, loginUser);
+
+router.get('/verify-email/:token', tokenValidation, verifyEmail);
+router.post('/resend-verification-email', emailValidation, resendVerificationEmail);
+
+router.post('/forgot-password', emailValidation, forgotPassword);
+router.put('/reset-password/:token', resetPasswordValidation, resetPassword);
 
 module.exports = router;
