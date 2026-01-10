@@ -106,15 +106,16 @@ const sendMessage = async (req, res, next) => {
             lastMessageTimestamp: message.createdAt
         });
 
+        /*
         const io = req.app.get('socketio');
         if (io && message.chatId && chat.participants) {
              chat.participants.forEach((participant) => {
                  if (participant && participant._id && !participant._id.equals(senderId)) {
-                    // Wyślij cały obiekt wiadomości, klient sam wybierze, co odszyfrować
-                    io.to(participant._id.toString()).emit("message received", message.toObject());
+                    io.to(participant._id.toString()).emit("send", message.toObject());
                  }
              });
         }
+        */
 
         message = message.toObject();
         delete message.__v;       
