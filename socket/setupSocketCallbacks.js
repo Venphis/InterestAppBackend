@@ -11,7 +11,11 @@ const setupSocketCallbacks = (io) => {
     io.on("connection", (socket) => {
         const userId = socket.user._id.toString();
         if (process.env.NODE_ENV !== 'test') console.log("Client connected:", userId);
+        if (socket.user.isBanned) {
+            socket.emit(SOCKET_EVENT.BAN, "{}")
+        }
         socket.join(userId);
+        onlineUsers[socket] = userId;
         
         socket.on(SOCKET_EVENT.SEND, async (payload) => {
             console.log("in send", payload);
@@ -37,14 +41,14 @@ const setupSocketCallbacks = (io) => {
             message = message.toObject();
             delete message.__v;       
 
-            console.log("out receive", JSON.stringify(message));
             chat.participants.forEach((participant) => {
+                console.log("out receive", JSON.stringify(message));
                 io.to(participant._id.toString()).emit(SOCKET_EVENT.RECEIVE, message)
             });
         });
 
-        socket.on(SOCKET_EVENT.WRITING, async (chatId) => {
-            console.log("in writing", chatId);
+        socket.on(SOCKET_EVENT.WRITING_START, async (chatId) => {
+            console.log("in writing start", chatId);
             const senderId = socket.user._id.toString();
             const chat = await Chat.findOne({
                 _id: chatId,
@@ -54,10 +58,26 @@ const setupSocketCallbacks = (io) => {
             chat.participants.forEach((participant) => {
                 const participantId = participant._id.toString()
                 if(participantId != senderId) {
-                    io.to(participantId).emit(SOCKET_EVENT.WRITING, chatId)
+                    io.to(participantId).emit(SOCKET_EVENT.WRITING_START, chatId)
                 }
             });
         }); 
+
+        socket.on(SOCKET_EVENT.WRITING_STOP, async (chatId) => {
+            console.log("in writing stop", chatId);
+            const senderId = socket.user._id.toString();
+            const chat = await Chat.findOne({
+                _id: chatId,
+                participants: senderId
+            }).populate('participants');
+
+            chat.participants.forEach((participant) => {
+                const participantId = participant._id.toString()
+                if(participantId != senderId) {
+                    io.to(participantId).emit(SOCKET_EVENT.WRITING_STOP, chatId)
+                }
+            });
+        });
 
         socket.on("disconnect", () => {
             if (process.env.NODE_ENV !== 'test') console.log("Client disconnected:", userId);

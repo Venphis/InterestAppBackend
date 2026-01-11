@@ -5,6 +5,10 @@ const createEvents = (...names) =>
 
 export const SOCKET_EVENT = createEvents(
     "SEND",
-    "WRITING",
-    "RECEIVE"
+    "WRITING_START",
+    "WRITING_STOP",
+    "RECEIVE",
+    "BLOCK",
+    "UNBLOCK",
+    "BAN",
 );

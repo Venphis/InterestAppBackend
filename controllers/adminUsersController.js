@@ -12,10 +12,11 @@ const logAuditEvent = require('../utils/auditLogger');
 const mongoose = require('mongoose');
 require('dotenv').config();
 const { validationResult } = require('express-validator');
+const { SOCKET_EVENT } = require('../socket/WSEvent');
 
 const generateUserToken = (id) => {
     return jwt.sign({ id }, process.env.JWT_SECRET, {
-      expiresIn: '1h',
+      expiresIn: '1h'
     });
 };
 
@@ -105,6 +106,9 @@ const banUser = async (req, res) => {
         user.banReason = banReason;
         user.bannedAt = Date.now();
         await user.save({ validateBeforeSave: false });
+        
+        const io = req.app.get('socketio');
+        io.to(user._id.toString()).emit(SOCKET_EVENT.BAN, "{}")
 
         const emailMessage = `
             Witaj ${user.username},\n\n
@@ -123,7 +127,7 @@ const banUser = async (req, res) => {
             console.error("Failed to send ban notification email:", emailError);
             await logAuditEvent('ban_notification_email_failed', {type: 'system'}, 'error', {type: 'user', id: user._id}, {error: emailError.message, banReason});
         }
-
+       
 
         await logAuditEvent(
             'admin_banned_user',

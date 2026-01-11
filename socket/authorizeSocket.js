@@ -5,7 +5,7 @@ const authorizeSocket = async (socket, next) => {
     const token = socket.handshake.query.token;
 
     if (!token) {
-        return next(new Error('Authentication error: No token provided'));
+        return next('Authentication error: No token provided');
     }
 
     try {
@@ -16,7 +16,7 @@ const authorizeSocket = async (socket, next) => {
             .where({ isDeleted: false, isBanned: false });
 
         if (!user) {
-            return next(new Error('Authentication error: User not found or disabled'));
+            return next('Authentication error: User not found or disabled');
         }
 
         socket.user = user;
@@ -24,7 +24,7 @@ const authorizeSocket = async (socket, next) => {
 
     } catch (error) {
         console.error('[SocketAuth] Failed:', error.message);
-        return next(new Error('Authentication error: Invalid token'));
+        return next('Authentication error: Invalid token');
     }
 };
 

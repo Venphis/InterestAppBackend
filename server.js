@@ -76,6 +76,18 @@ app.get('/', (req, res) => {
   res.send(`API is running.`);
 });
 
+// Socket.io setup
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {
+  pingTimeout: 60000,
+  cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] },
+});
+
+// Expose Socket.io instance to the app
+app.set('socketio', io);
+
+setupSocketCallbacks(io);
+
 // Register API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -96,18 +108,6 @@ app.use('/api/admin/interests', adminInterestRoutes);
 app.use('/api/admin/management', adminManagementRoutes);
 app.use('/api/admin/audit-logs', adminAuditLogRoutes);
 app.use('/api/admin/languages', adminLanguageRoutes);
-
-// Socket.io setup
-const httpServer = http.createServer(app);
-const io = new Server(httpServer, {
-  pingTimeout: 60000,
-  cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] },
-});
-
-// Expose Socket.io instance to the app
-app.set('socketio', io);
-
-setupSocketCallbacks(io);
 
 // 404 Handler
 app.use((req, res, next) => {
