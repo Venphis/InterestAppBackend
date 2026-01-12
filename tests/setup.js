@@ -3,14 +3,13 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 
 let mongod;
 
+// Start In-Memory DB before all tests
 beforeAll(async () => {
     mongod = await MongoMemoryServer.create(); 
-    const uri = mongod.getUri(); 
-
-    process.env.MONGO_URI_TEST = uri;
-
+    process.env.MONGO_URI_TEST = mongod.getUri();
 });
 
+// Cleanup after all tests
 afterAll(async () => {
     if (mongoose.connection.readyState !== 0) {
          await mongoose.disconnect(); 
@@ -20,14 +19,16 @@ afterAll(async () => {
     }
 });
 
+// Helper: Clear all collections
 async function clearDatabase() {
+    if (mongoose.connection.readyState === 0) return;
+    
     const collections = mongoose.connection.collections;
-    for (const key in collections) {
-        await collections[key].deleteMany({});
-    }
+    const promises = Object.values(collections).map(collection => collection.deleteMany({}));
+    await Promise.all(promises);
 }
 
+// Reset DB state before each test
 beforeEach(async () => {
-    if (mongoose.connection.readyState === 0) return; 
     await clearDatabase();
 });

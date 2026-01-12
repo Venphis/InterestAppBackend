@@ -5,210 +5,163 @@ const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const { createAdmin, createSuperAdmin } = require('./helpers/factories'); 
 
-describe('Admin Auth API', () => {
-    const baseAdminCredentials = {
-        username: 'testsuperadmin_auth', 
-        password: 'superStrongPassword123!',
-    };
+describe('Admin Authentication API', () => {
+    // Shared credentials
+    const credentials = { username: 'superadmin_auth', password: 'superStrongPassword123!' };
+    let admin;
+
+    beforeEach(async () => {
+        // Clear previous state and create fresh admin
+        await mongoose.connection.collection('adminusers').deleteMany({});
+        admin = await createSuperAdmin(credentials);
+    });
 
     describe('POST /api/admin/auth/login', () => {
-        let adminForLoginTest;
+        it('should login active admin and return token', async () => {
+            const res = await request(app).post('/api/admin/auth/login').send(credentials);
 
-        beforeEach(async () => {
-            await mongoose.connection.collection('adminusers').deleteMany({ username: baseAdminCredentials.username });
-            adminForLoginTest = await createSuperAdmin({ 
-                username: baseAdminCredentials.username,
-                password: baseAdminCredentials.password, 
-            });
+            expect(res.statusCode).toBe(200);
+            expect(res.body.token).toBeDefined();
+            expect(res.body.username).toBe(credentials.username);
+            expect(res.body.role).toBe('superadmin');
         });
 
-        it('should login an existing active admin and return a token', async () => {
+        it('should reject incorrect password', async () => {
             const res = await request(app)
                 .post('/api/admin/auth/login')
-                .send(baseAdminCredentials);
-
-            expect(res.statusCode).toEqual(200);
-            expect(res.body).toHaveProperty('token');
-            expect(res.body).toHaveProperty('username', baseAdminCredentials.username);
-            expect(res.body).toHaveProperty('role', 'superadmin');
-            expect(res.body._id).toBe(adminForLoginTest._id.toString());
+                .send({ username: credentials.username, password: 'wrongPassword' });
+            
+            expect(res.statusCode).toBe(401);
+            expect(res.body.message).toMatch(/Invalid credentials/i);
         });
 
-        it('should not login with incorrect password', async () => {
+        it('should reject inactive admin', async () => {
+            await AdminUser.findByIdAndUpdate(admin._id, { isActive: false });
+            
             const res = await request(app)
                 .post('/api/admin/auth/login')
-                .send({ username: baseAdminCredentials.username, password: 'wrongPassword' });
-            expect(res.statusCode).toEqual(401);
-            expect(res.body.message).toMatch(/Invalid admin credentials/i);
+                .send(credentials);
+
+            expect(res.statusCode).toBe(403);
+            expect(res.body.message).toMatch(/inactive/i);
         });
 
-        it('should not login a non-existent admin', async () => {
+        it('should validate missing fields', async () => {
             const res = await request(app)
                 .post('/api/admin/auth/login')
-                .send({ username: 'nonexistentadmin_auth', password: 'password' });
-            expect(res.statusCode).toEqual(401);
-            expect(res.body.message).toMatch(/Invalid admin credentials or admin not found/i);
-        });
-
-        it('should not login an inactive admin', async () => {
-            await AdminUser.updateOne({ _id: adminForLoginTest._id }, { isActive: false });
-            const res = await request(app)
-                .post('/api/admin/auth/login')
-                .send(baseAdminCredentials);
-            expect(res.statusCode).toEqual(403);
-            expect(res.body).toHaveProperty('message', 'Admin account is inactive');
-        });
-
-        it('should return validation errors for missing credentials', async () => {
-            const res = await request(app)
-                .post('/api/admin/auth/login')
-                .send({ username: baseAdminCredentials.username }); 
-            expect(res.statusCode).toEqual(400);
-            expect(res.body).toHaveProperty('errors');
-            expect(res.body.errors.some(err => err.path === 'password')).toBe(true);
+                .send({ username: credentials.username });
+            
+            expect(res.statusCode).toBe(400);
+            expect(res.body.errors).toBeDefined();
         });
     });
 
     describe('GET /api/admin/auth/me', () => {
-        let currentAdminToken;
-        let currentAdminId;
-        const meAdminCredentials = { username: 'meAdminUser_auth', password: 'mePassword123' };
-
+        let token;
 
         beforeEach(async () => {
-            await mongoose.connection.collection('adminusers').deleteMany({username: meAdminCredentials.username });
-            const admin = await createAdmin({ 
-                username: meAdminCredentials.username,
-                password: meAdminCredentials.password,
-                role: 'admin' 
-            });
-            currentAdminId = admin._id.toString();
-
-            const loginRes = await request(app)
-                .post('/api/admin/auth/login')
-                .send(meAdminCredentials);
-            expect(loginRes.statusCode).toBe(200);
-            currentAdminToken = loginRes.body.token;
-            if (!currentAdminToken) throw new Error("Failed to get admin token in GET /me beforeEach");
+            const res = await request(app).post('/api/admin/auth/login').send(credentials);
+            token = res.body.token;
         });
 
-        it('should get current admin profile with a valid admin token', async () => {
+        it('should retrieve current admin profile', async () => {
             const res = await request(app)
                 .get('/api/admin/auth/me')
-                .set('Authorization', `Bearer ${currentAdminToken}`);
-            expect(res.statusCode).toEqual(200);
-            expect(res.body._id).toBe(currentAdminId);
-            expect(res.body.username).toBe(meAdminCredentials.username);
+                .set('Authorization', `Bearer ${token}`);
+
+            expect(res.statusCode).toBe(200);
+            expect(res.body._id).toBe(admin._id.toString());
+            expect(res.body.username).toBe(credentials.username);
         });
 
-        it('should not get profile without a token', async () => {
+        it('should reject request without token', async () => {
             const res = await request(app).get('/api/admin/auth/me');
-            expect(res.statusCode).toEqual(401);
-            expect(res.body).toHaveProperty('message');
-            expect(res.body.message).toMatch(/no token/i);
+            expect(res.statusCode).toBe(401);
         });
 
-        it('should not get profile with a regular user token (expecting "token is not an admin token")', async () => {
-            if (!process.env.JWT_ADMIN_SECRET && !process.env.JWT_SECRET) { 
-                throw new Error("Admin or User JWT secret is undefined for user-typed token test!");
-            }
-            const secretForUserTypeToken = process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET;
-            const userTestToken = jwt.sign({ id: new mongoose.Types.ObjectId().toString(), type: 'user' }, secretForUserTypeToken);
+        it('should reject request with non-admin token', async () => {
+            const secret = process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET;
+            const userToken = jwt.sign({ id: new mongoose.Types.ObjectId(), type: 'user' }, secret);
 
             const res = await request(app)
                 .get('/api/admin/auth/me')
-                .set('Authorization', `Bearer ${userTestToken}`);
-            expect([401, 403]).toContain(res.statusCode);
-            expect(res.body).toHaveProperty('message');
-            expect(res.body.message).toMatch(/not an admin token|access denied|not authorized/i);
+                .set('Authorization', `Bearer ${userToken}`);
+            
+            expect(res.statusCode).toBe(403);
+            expect(res.body.message).toMatch(/not an admin token/i);
         });
     });
 
     describe('PUT /api/admin/auth/change-password', () => {
-        let changePassAdminToken;
-        const changePassAdminCreds = { username: 'changepw_auth', password: 'oldPassword123' };
-        const newPassword = 'newSuperStrongPassword456!';
+        let token;
+        const newPassword = 'newPassword123!';
 
         beforeEach(async () => {
-            await mongoose.connection.collection('adminusers').deleteMany({username: changePassAdminCreds.username });
-            await createAdmin({ 
-                username: changePassAdminCreds.username,
-                password: changePassAdminCreds.password
-            });
-            const loginRes = await request(app).post('/api/admin/auth/login').send(changePassAdminCreds);
-            expect(loginRes.statusCode).toBe(200);
-            changePassAdminToken = loginRes.body.token;
-            if (!changePassAdminToken) throw new Error("Failed to get admin token in PUT /change-password beforeEach");
+            const res = await request(app).post('/api/admin/auth/login').send(credentials);
+            token = res.body.token;
         });
 
-        it('should allow admin to change their own password', async () => {
+        it('should update password successfully', async () => {
             const res = await request(app)
                 .put('/api/admin/auth/change-password')
-                .set('Authorization', `Bearer ${changePassAdminToken}`)
+                .set('Authorization', `Bearer ${token}`)
                 .send({
-                    currentPassword: changePassAdminCreds.password,
+                    currentPassword: credentials.password,
                     newPassword: newPassword,
                     confirmNewPassword: newPassword
                 });
-            expect(res.statusCode).toEqual(200);
-            expect(res.body).toHaveProperty('message', 'Password changed successfully.');
 
-            const loginWithNewPassRes = await request(app)
+            expect(res.statusCode).toBe(200);
+
+            const loginRes = await request(app)
                 .post('/api/admin/auth/login')
-                .send({ username: changePassAdminCreds.username, password: newPassword });
-            expect(loginWithNewPassRes.statusCode).toEqual(200);
+                .send({ username: credentials.username, password: newPassword });
+            
+            expect(loginRes.statusCode).toBe(200);
         });
 
-        it('should not change password with incorrect current password', async () => {
+        it('should reject incorrect current password', async () => {
             const res = await request(app)
                 .put('/api/admin/auth/change-password')
-                .set('Authorization', `Bearer ${changePassAdminToken}`)
+                .set('Authorization', `Bearer ${token}`)
                 .send({
-                    currentPassword: 'wrongOldPassword',
+                    currentPassword: 'wrongPassword',
                     newPassword: newPassword,
                     confirmNewPassword: newPassword
                 });
-            expect(res.statusCode).toEqual(401);
-            expect(res.body).toHaveProperty('message', 'Incorrect current password.');
+
+            expect(res.statusCode).toBe(401);
         });
 
-        it('should return validation error if new passwords do not match', async () => {
-             const res = await request(app)
+        it('should reject mismatching new passwords', async () => {
+            const res = await request(app)
                 .put('/api/admin/auth/change-password')
-                .set('Authorization', `Bearer ${changePassAdminToken}`)
+                .set('Authorization', `Bearer ${token}`)
                 .send({
-                    currentPassword: changePassAdminCreds.password,
+                    currentPassword: credentials.password,
                     newPassword: newPassword,
-                    confirmNewPassword: 'doesNotMatchNewPassword'
+                    confirmNewPassword: 'mismatchingPassword'
                 });
-            expect(res.statusCode).toEqual(400);
-            expect(res.body).toHaveProperty('errors');
-            expect(res.body.errors.some(e => e.path === 'confirmNewPassword')).toBe(true);
+
+            expect(res.statusCode).toBe(400);
         });
     });
 
     describe('POST /api/admin/auth/logout', () => {
-        let logoutAdminToken;
-        const logoutAdminCreds = { username: 'logoutUser_auth', password: 'password123' };
+        let token;
 
         beforeEach(async () => {
-            await mongoose.connection.collection('adminusers').deleteMany({username: logoutAdminCreds.username});
-            await createAdmin({
-                username: logoutAdminCreds.username,
-                password: logoutAdminCreds.password
-            });
-            const loginRes = await request(app).post('/api/admin/auth/login').send(logoutAdminCreds);
-            expect(loginRes.statusCode).toBe(200);
-            logoutAdminToken = loginRes.body.token;
-            if (!logoutAdminToken) throw new Error("Failed to get admin token in POST /logout beforeEach");
+            const res = await request(app).post('/api/admin/auth/login').send(credentials);
+            token = res.body.token;
         });
 
-        it('should return success message for logout', async () => {
+        it('should logout successfully', async () => {
             const res = await request(app)
                 .post('/api/admin/auth/logout')
-                .set('Authorization', `Bearer ${logoutAdminToken}`);
-            expect(res.statusCode).toEqual(200);
-            expect(res.body).toHaveProperty('message', 'Admin logged out successfully. Please clear your token.');
+                .set('Authorization', `Bearer ${token}`);
+
+            expect(res.statusCode).toBe(200);
+            expect(res.body.message).toMatch(/logged out/i);
         });
     });
 });

@@ -1,21 +1,28 @@
-// routes/keyRoutes.js
 const express = require('express');
 const { body, param } = require('express-validator');
 const { protect } = require('../middleware/authMiddleware');
 const { publishPublicKey, getPublicKey } = require('../controllers/keyController');
+
 const router = express.Router();
 
 router.use(protect);
 
-router.post('/publish', [
+// --- Validation Rules ---
+
+const publishKeyValidation = [
     body('publicKey')
         .trim()
-        .notEmpty().withMessage('Public key is required.')
-        .isString().withMessage('Public key must be a string.')
-], publishPublicKey);
+        .notEmpty().withMessage('Public key required')
+        .isString()
+];
 
-router.get('/:userId', [
-    param('userId').isMongoId().withMessage('Invalid User ID format.')
-], getPublicKey);
+const userIdValidation = [
+    param('userId').isMongoId().withMessage('Invalid User ID')
+];
+
+// --- Routes ---
+
+router.post('/publish', publishKeyValidation, publishPublicKey);
+router.get('/:userId', userIdValidation, getPublicKey);
 
 module.exports = router;

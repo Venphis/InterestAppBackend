@@ -2,139 +2,117 @@ const AdminUser = require('../models/AdminUser');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt'); 
 const logAuditEvent = require('../utils/auditLogger'); 
-require('dotenv').config();
 const { validationResult } = require('express-validator');
+require('dotenv').config();
 
+// Helper: Generates JWT with admin-specific claims
 const generateAdminToken = (id, role) => {
-  return jwt.sign({ id, role, type: 'admin' }, process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET, {
-    expiresIn: '12h',
-  });
+  return jwt.sign(
+    { id, role, type: 'admin' }, 
+    process.env.JWT_ADMIN_SECRET || process.env.JWT_SECRET, 
+    { expiresIn: '12h' }
+  );
 };
 
+// Authenticates admin and returns JWT
 const loginAdmin = async (req, res) => {
   const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
   const { username, password } = req.body;
-  let adminForLog = null; 
+  
   try {
-    if (!username || !password) {
-      return res.status(400).json({ message: 'Please provide admin username and password' });
-    }
-    const admin = await AdminUser.findOne({ username }).select('+password'); 
-    adminForLog = admin; 
+    const admin = await AdminUser.findOne({ username }).select('+password');
 
     if (!admin) {
-      await logAuditEvent('admin_login_failed', { type: 'system' }, 'warn', {}, { attemptUsername: username, reason: 'Admin not found' }, req);
-      return res.status(401).json({ message: 'Invalid admin credentials or admin not found' });
-    }
-    if (!admin.isActive) {
-      await logAuditEvent('admin_login_failed', { type: 'admin', id: admin._id }, 'warn', {}, { reason: 'Account inactive' }, req);
-      return res.status(403).json({ message: 'Admin account is inactive' });
+      await logAuditEvent('admin_login_failed', { type: 'system' }, 'warn', {}, { username, reason: 'Not found' }, req);
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    const isMatch = await bcrypt.compare(password, admin.password); 
+    if (!admin.isActive) {
+      await logAuditEvent('admin_login_failed', { type: 'admin', id: admin._id }, 'warn', {}, { reason: 'Inactive account' }, req);
+      return res.status(403).json({ message: 'Account is inactive' });
+    }
+
+    const isMatch = await bcrypt.compare(password, admin.password);
 
     if (isMatch) {
-      const adminResponse = await AdminUser.findById(admin._id); 
-      await logAuditEvent('admin_login_success', { type: 'admin', id: adminResponse._id }, 'info', {}, {}, req);
+      await logAuditEvent('admin_login_success', { type: 'admin', id: admin._id }, 'info', {}, {}, req);
+      
+      // Return user data without password hash
+      const adminData = await AdminUser.findById(admin._id);
       res.json({
-        _id: adminResponse._id,
-        username: adminResponse.username,
-        role: adminResponse.role,
-        token: generateAdminToken(adminResponse._id, adminResponse.role),
+        _id: adminData._id,
+        username: adminData.username,
+        role: adminData.role,
+        token: generateAdminToken(adminData._id, adminData.role),
       });
     } else {
       await logAuditEvent('admin_login_failed', { type: 'admin', id: admin._id }, 'warn', {}, { reason: 'Invalid password' }, req);
-      res.status(401).json({ message: 'Invalid admin credentials' });
+      res.status(401).json({ message: 'Invalid credentials' });
     }
   } catch (error) {
-    console.error('Admin Login Error:', error);
-    await logAuditEvent('admin_login_error', { type: 'system' }, 'error', {}, { error: error.message, attemptUsername: username, adminId: adminForLog ? adminForLog._id : null }, req);
-    res.status(500).json({ message: 'Server Error during admin login' });
+    console.error('Admin Login Error:', error.message);
+    await logAuditEvent('admin_login_error', { type: 'system' }, 'error', {}, { error: error.message }, req);
+    res.status(500).json({ message: 'Server Error' });
   }
 };
 
+// Returns current authenticated admin details
 const getAdminMe = async (req, res) => {
-  const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
-
-    const admin = await AdminUser.findById(req.adminUser.id);
-    if (!admin) {
-        return res.status(404).json({ message: 'Admin not found' });
-    }
-    res.json({
-        _id: admin._id,
-        username: admin.username,
-        role: admin.role,
-        isActive: admin.isActive,
-        createdAt: admin.createdAt
-    });
+  const admin = await AdminUser.findById(req.adminUser.id);
+  if (!admin) return res.status(404).json({ message: 'Admin not found' });
+  
+  res.json({
+      _id: admin._id,
+      username: admin.username,
+      role: admin.role,
+      isActive: admin.isActive,
+      createdAt: admin.createdAt
+  });
 };
 
-// @desc    Change current admin's password
-// @route   PUT /api/admin/auth/change-password
-// @access  Private (Admin)
+// Updates admin password with security checks
 const changeAdminPassword = async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-  }
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
     const { currentPassword, newPassword, confirmNewPassword } = req.body;
-    const adminId = req.adminUser._id; 
+    const adminId = req.adminUser._id;
 
-    if (!currentPassword || !newPassword || !confirmNewPassword) {
-        return res.status(400).json({ message: 'Please provide current password, new password, and confirm new password.' });
-    }
     if (newPassword !== confirmNewPassword) {
-        return res.status(400).json({ message: 'New password and confirmation password do not match.' });
-    }
-    if (newPassword.length < 8) {
-        return res.status(400).json({ message: 'New password must be at least 8 characters long.' });
+        return res.status(400).json({ message: 'Passwords do not match' });
     }
     if (newPassword === currentPassword) {
-        return res.status(400).json({ message: 'New password cannot be the same as the current password.' });
+        return res.status(400).json({ message: 'New password must be different' });
     }
 
     try {
         const admin = await AdminUser.findById(adminId).select('+password');
-        if (!admin) {
-            await logAuditEvent('admin_change_password_failed', { type: 'admin', id: adminId }, 'error', {}, { reason: 'Admin not found during password change' }, req);
-            return res.status(404).json({ message: 'Admin not found.' });
-        }
+        if (!admin) return res.status(404).json({ message: 'Admin not found' });
 
         const isMatch = await bcrypt.compare(currentPassword, admin.password);
         if (!isMatch) {
-            await logAuditEvent('admin_change_password_failed', { type: 'admin', id: adminId }, 'warn', {}, { reason: 'Incorrect current password' }, req);
-            return res.status(401).json({ message: 'Incorrect current password.' });
+            await logAuditEvent('admin_change_password_failed', { type: 'admin', id: adminId }, 'warn', {}, { reason: 'Wrong current password' }, req);
+            return res.status(401).json({ message: 'Incorrect current password' });
         }
 
         admin.password = newPassword;
-        await admin.save();
+        await admin.save(); // Triggers pre-save hook for hashing
 
         await logAuditEvent('admin_password_changed', { type: 'admin', id: adminId }, 'admin_action', {}, {}, req);
-
-        res.status(200).json({ message: 'Password changed successfully.' });
+        res.status(200).json({ message: 'Password changed successfully' });
 
     } catch (error) {
-        console.error('Admin Change Password Error:', error);
-        await logAuditEvent('admin_change_password_error', { type: 'admin', id: adminId }, 'error', {}, { error: error.message }, req);
-        res.status(500).json({ message: 'Server error changing password.' });
+        console.error('Password Change Error:', error.message);
+        res.status(500).json({ message: 'Server error' });
     }
 };
 
-
+// Logs out admin (client must clear token)
 const logoutAdmin = (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
     logAuditEvent('admin_logout', { type: 'admin', id: req.adminUser._id }, 'info', {}, {}, req);
-    res.status(200).json({ message: 'Admin logged out successfully. Please clear your token.' });
+    res.status(200).json({ message: 'Logged out successfully' });
 };
 
 module.exports = { loginAdmin, getAdminMe, changeAdminPassword, logoutAdmin };

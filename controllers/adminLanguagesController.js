@@ -3,8 +3,8 @@ const Language = require('../models/Language');
 const Interest = require('../models/Interest');
 const InterestCategory = require('../models/InterestCategory');
 const logAuditEvent = require('../utils/auditLogger');
+const { DEFAULT_LANG } = require('../config/i18n');
 
-const { DEFAULT_LANG } = require('../config/i18n'); // u Ciebie: 'pl'
 const normalizeCode = (code) => String(code || '').trim().toLowerCase();
 
 const createLanguage = async (req, res, next) => {
@@ -13,36 +13,41 @@ const createLanguage = async (req, res, next) => {
 
   try {
     const code = normalizeCode(req.body.code);
-    const name = String(req.body.name || '').trim();
-    const nativeName = String(req.body.nativeName || '').trim();
+    const { name, nativeName } = req.body;
 
     const exists = await Language.findOne({ code });
-    if (exists) return res.status(400).json({ message: 'Language code already exists.' });
+    if (exists) return res.status(400).json({ message: 'Language code already exists' });
 
-    const lang = await Language.create({ code, name, nativeName, isArchived: false });
+    const lang = await Language.create({ 
+      code, 
+      name: String(name).trim(), 
+      nativeName: String(nativeName).trim(), 
+      isArchived: false 
+    });
 
     await logAuditEvent(
       'admin_created_language',
       { type: 'admin', id: req.adminUser._id },
       'admin_action',
       { type: 'language', id: lang._id },
-      { code: lang.code, name: lang.name, nativeName: lang.nativeName },
+      { code: lang.code, name: lang.name },
       req
     );
 
     return res.status(201).json(lang);
   } catch (err) {
-    if (err?.code === 11000) return res.status(400).json({ message: 'Language code already exists.' });
+    if (err.code === 11000) return res.status(400).json({ message: 'Language code duplicate' });
     next(err);
   }
 };
 
 const getLanguages = async (req, res, next) => {
   try {
-    const showArchived = String(req.query.showArchived || 'false') === 'true';
-    const q = showArchived ? {} : { isArchived: false };
-    const langs = await Language.find(q).sort({ name: 1, code: 1 }).lean();
-    res.json(langs);
+    const showArchived = req.query.showArchived === 'true';
+    const query = showArchived ? {} : { isArchived: false };
+    
+    const languages = await Language.find(query).sort({ name: 1, code: 1 }).lean();
+    res.json(languages);
   } catch (err) {
     next(err);
   }
@@ -51,34 +56,26 @@ const getLanguages = async (req, res, next) => {
 const getLanguageById = async (req, res, next) => {
   try {
     const lang = await Language.findById(req.params.languageId).lean();
-    if (!lang) return res.status(404).json({ message: 'Language not found.' });
+    if (!lang) return res.status(404).json({ message: 'Language not found' });
     res.json(lang);
   } catch (err) {
     next(err);
   }
 };
 
-// Migracja kluczy i18n: en -> en-us (w Interest i InterestCategory)
-// Uwaga: używa "pipeline update" (MongoDB 4.2+). Jeśli masz starsze Mongo, daj znać – zrobi się pętlą.
+// Renames i18n keys in related collections (Interests, Categories) using aggregation pipeline
 const migrateI18nKey = async (oldCode, newCode) => {
   const oldKey = `i18n.${oldCode}`;
   const newKey = `i18n.${newCode}`;
+  const updatePipeline = [
+    { $set: { [newKey]: `$${oldKey}` } },
+    { $unset: [oldKey] },
+  ];
 
-  await Interest.updateMany(
-    { [oldKey]: { $exists: true } },
-    [
-      { $set: { [newKey]: `$${oldKey}` } },
-      { $unset: [oldKey] },
-    ]
-  );
-
-  await InterestCategory.updateMany(
-    { [oldKey]: { $exists: true } },
-    [
-      { $set: { [newKey]: `$${oldKey}` } },
-      { $unset: [oldKey] },
-    ]
-  );
+  await Promise.all([
+    Interest.updateMany({ [oldKey]: { $exists: true } }, updatePipeline),
+    InterestCategory.updateMany({ [oldKey]: { $exists: true } }, updatePipeline)
+  ]);
 };
 
 const updateLanguage = async (req, res, next) => {
@@ -86,39 +83,33 @@ const updateLanguage = async (req, res, next) => {
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
   try {
-    const languageId = req.params.languageId;
+    const lang = await Language.findById(req.params.languageId);
+    if (!lang) return res.status(404).json({ message: 'Language not found' });
 
-    const lang = await Language.findById(languageId);
-    if (!lang) return res.status(404).json({ message: 'Language not found.' });
-
-    const oldData = { code: lang.code, name: lang.name, nativeName: lang.nativeName, isArchived: lang.isArchived };
-
-    // blokady dla domyślnego języka
-    if (lang.code === DEFAULT_LANG) {
+    const oldData = { ...lang.toObject() };
+    const oldCode = lang.code;
+    
+    // Default language protection
+    if (oldCode === DEFAULT_LANG) {
       if (req.body.code && normalizeCode(req.body.code) !== DEFAULT_LANG) {
-        return res.status(400).json({ message: `Cannot change code of default language (${DEFAULT_LANG}).` });
+        return res.status(400).json({ message: `Cannot change code of default language (${DEFAULT_LANG})` });
       }
       if (req.body.isArchived === true) {
-        return res.status(400).json({ message: `Cannot archive default language (${DEFAULT_LANG}).` });
+        return res.status(400).json({ message: `Cannot archive default language (${DEFAULT_LANG})` });
       }
     }
 
-    let oldCode = lang.code;
-    let newCode = lang.code;
-
-    if (req.body.code !== undefined) {
-      newCode = normalizeCode(req.body.code);
-      lang.code = newCode;
-    }
-    if (req.body.name !== undefined) lang.name = String(req.body.name).trim();
-    if (req.body.nativeName !== undefined) lang.nativeName = String(req.body.nativeName).trim();
+    // Update fields
+    if (req.body.code) lang.code = normalizeCode(req.body.code);
+    if (req.body.name) lang.name = String(req.body.name).trim();
+    if (req.body.nativeName) lang.nativeName = String(req.body.nativeName).trim();
     if (req.body.isArchived !== undefined) lang.isArchived = !!req.body.isArchived;
 
     const updated = await lang.save();
 
-    // jeśli zmienił się skrót – migruj klucze i18n w danych
-    if (oldCode !== newCode) {
-      await migrateI18nKey(oldCode, newCode);
+    // Trigger migration if code changed
+    if (oldCode !== updated.code) {
+      await migrateI18nKey(oldCode, updated.code);
     }
 
     await logAuditEvent(
@@ -126,13 +117,13 @@ const updateLanguage = async (req, res, next) => {
       { type: 'admin', id: req.adminUser._id },
       'admin_action',
       { type: 'language', id: updated._id },
-      { oldData, newData: { code: updated.code, name: updated.name, nativeName: updated.nativeName, isArchived: updated.isArchived } },
+      { oldData, newData: updated.toObject() },
       req
     );
 
     res.json(updated);
   } catch (err) {
-    if (err?.code === 11000) return res.status(400).json({ message: 'Language code already exists.' });
+    if (err.code === 11000) return res.status(400).json({ message: 'Language code duplicate' });
     next(err);
   }
 };
@@ -140,29 +131,20 @@ const updateLanguage = async (req, res, next) => {
 const archiveLanguage = async (req, res, next) => {
   try {
     const lang = await Language.findById(req.params.languageId);
-    if (!lang) return res.status(404).json({ message: 'Language not found.' });
+    if (!lang) return res.status(404).json({ message: 'Language not found' });
 
     if (lang.code === DEFAULT_LANG) {
-      return res.status(400).json({ message: `Cannot archive default language (${DEFAULT_LANG}).` });
+      return res.status(400).json({ message: `Cannot archive default language (${DEFAULT_LANG})` });
     }
 
-    if (lang.isArchived) {
-      return res.status(200).json({ message: 'Language already archived.' });
-    }
+    if (lang.isArchived) return res.status(400).json({ message: 'Already archived' });
 
     lang.isArchived = true;
     await lang.save();
 
-    await logAuditEvent(
-      'admin_archived_language',
-      { type: 'admin', id: req.adminUser._id },
-      'admin_action',
-      { type: 'language', id: lang._id },
-      { code: lang.code, name: lang.name },
-      req
-    );
+    await logAuditEvent('admin_archived_language', { type: 'admin', id: req.adminUser._id }, 'admin_action', { type: 'language', id: lang._id }, { code: lang.code }, req);
 
-    res.json({ message: 'Language archived successfully.' });
+    res.json({ message: 'Language archived' });
   } catch (err) {
     next(err);
   }
@@ -171,25 +153,16 @@ const archiveLanguage = async (req, res, next) => {
 const restoreLanguage = async (req, res, next) => {
   try {
     const lang = await Language.findById(req.params.languageId);
-    if (!lang) return res.status(404).json({ message: 'Language not found.' });
+    if (!lang) return res.status(404).json({ message: 'Language not found' });
 
-    if (!lang.isArchived) {
-      return res.status(200).json({ message: 'Language is not archived.' });
-    }
+    if (!lang.isArchived) return res.status(400).json({ message: 'Language is not archived' });
 
     lang.isArchived = false;
     await lang.save();
 
-    await logAuditEvent(
-      'admin_restored_language',
-      { type: 'admin', id: req.adminUser._id },
-      'admin_action',
-      { type: 'language', id: lang._id },
-      { code: lang.code, name: lang.name },
-      req
-    );
+    await logAuditEvent('admin_restored_language', { type: 'admin', id: req.adminUser._id }, 'admin_action', { type: 'language', id: lang._id }, { code: lang.code }, req);
 
-    res.json({ message: 'Language restored successfully.', language: lang });
+    res.json({ message: 'Language restored', language: lang });
   } catch (err) {
     next(err);
   }

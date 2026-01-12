@@ -1,32 +1,23 @@
 const AdminUser = require('../models/AdminUser');
 const { validationResult } = require('express-validator');
+const logAuditEvent = require('../utils/auditLogger');
 
-// @desc    Create a new admin user by Superadmin
-// @route   POST /api/admin/management/admins
-// @access  Private (Superadmin only)
-const createAdminAccount = async (req, res) => {
+// Create new admin (Superadmin only)
+const createAdminAccount = async (req, res, next) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
     const { username, password, role, isActive } = req.body;
 
-    if (!username || !password || !role) {
-        return res.status(400).json({ message: 'Username, password, and role are required for new admin.' });
-    }
-    if (password.length < 8) {
-         return res.status(400).json({ message: 'Admin password must be at least 8 characters long.' });
-    }
+    // Validate role against enum values
     const allowedRoles = AdminUser.schema.path('role').enumValues;
     if (!allowedRoles.includes(role)) {
-        return res.status(400).json({ message: `Invalid role. Allowed roles: ${allowedRoles.join(', ')}` });
+        return res.status(400).json({ message: `Invalid role. Allowed: ${allowedRoles.join(', ')}` });
     }
 
     try {
-        const adminExists = await AdminUser.findOne({ username });
-        if (adminExists) {
-            return res.status(400).json({ message: 'Admin with this username already exists.' });
-        }
+        const exists = await AdminUser.exists({ username });
+        if (exists) return res.status(400).json({ message: 'Username taken' });
 
         const newAdmin = await AdminUser.create({
             username,
@@ -35,183 +26,112 @@ const createAdminAccount = async (req, res) => {
             isActive: isActive !== undefined ? isActive : true
         });
 
-        const adminResponse = await AdminUser.findById(newAdmin._id);
-        res.status(201).json(adminResponse);
-
-        await logAuditEvent(
-            'superadmin_created_admin_account',
-            { type: 'admin', id: req.adminUser._id }, 
-            'admin_action',
-            { type: 'admin', id: newAdmin._id },
-            { newAdminUsername: newAdmin.username, newAdminRole: newAdmin.role }, req
-        );
-        res.status(201).json(adminResponse);
-
+        // Fetch without password for response
+        const responseData = await AdminUser.findById(newAdmin._id).select('-password');
+        
+        await logAuditEvent('superadmin_created_admin', { type: 'admin', id: req.adminUser._id }, 'admin_action', { type: 'admin', id: newAdmin._id }, { username, role }, req);
+        
+        res.status(201).json(responseData);
     } catch (error) {
-        console.error('Superadmin Create Admin Error:', error);
-        if (error.name === 'ValidationError') return res.status(400).json({ message: error.message });
-        res.status(500).json({ message: 'Server Error creating admin account.' });
+        console.error('Create Admin Error:', error.message);
+        next(error);
     }
 };
 
-// @desc    Get all admin accounts
-// @route   GET /api/admin/management/admins
-// @access  Private (Superadmin only)
-const getAllAdminAccounts = async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+// Get list of all admins
+const getAllAdminAccounts = async (req, res, next) => {
     try {
         const admins = await AdminUser.find().select('-password').sort('username');
         res.json(admins);
     } catch (error) {
-        console.error('Superadmin Get Admins Error:', error);
-        res.status(500).json({ message: 'Server Error fetching admin accounts.' });
+        next(error);
     }
 };
 
-// @desc    Get a single admin account by ID
-// @route   GET /api/admin/management/admins/:adminId
-// @access  Private (Superadmin only)
-const getAdminAccountById = async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+// Get single admin by ID
+const getAdminAccountById = async (req, res, next) => {
     try {
         const admin = await AdminUser.findById(req.params.adminId).select('-password');
-        if (!admin) {
-            return res.status(404).json({ message: 'Admin account not found.' });
-        }
+        if (!admin) return res.status(404).json({ message: 'Admin not found' });
         res.json(admin);
     } catch (error) {
-        console.error('Superadmin Get Admin By ID Error:', error);
-        if (error.kind === 'ObjectId') return res.status(404).json({ message: 'Admin account not found (invalid ID).' });
-        res.status(500).json({ message: 'Server Error fetching admin account.' });
+        next(error);
     }
 };
 
-// @desc    Update an admin account (role, isActive)
-// @route   PUT /api/admin/management/admins/:adminId
-// @access  Private (Superadmin only)
-const updateAdminAccount = async (req, res) => {
+// Update admin details (role, active status)
+const updateAdminAccount = async (req, res, next) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
+    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
     const { role, isActive } = req.body;
-    const adminIdToUpdate = req.params.adminId;
-    const performingSuperadminId = req.adminUser._id;
+    const targetId = req.params.adminId;
+    const actorId = req.adminUser._id.toString();
 
-    if (adminIdToUpdate === performingSuperadminId.toString() && isActive === false) {
-        return res.status(400).json({ message: 'Superadmin cannot deactivate their own account.' });
+    // Prevent self-lockout
+    if (targetId === actorId) {
+        if (isActive === false) return res.status(400).json({ message: 'Cannot deactivate own account' });
+        if (role && role !== 'superadmin') return res.status(400).json({ message: 'Cannot demote self' });
     }
-    if (adminIdToUpdate === performingSuperadminId.toString() && role && role !== 'superadmin') {
-         return res.status(400).json({ message: 'Superadmin cannot change their own role from superadmin.' });
-    }
-
 
     try {
-        const admin = await AdminUser.findById(adminIdToUpdate);
-        if (!admin) {
-            return res.status(404).json({ message: 'Admin account not found.' });
+        const admin = await AdminUser.findById(targetId);
+        if (!admin) return res.status(404).json({ message: 'Admin not found' });
+
+        const oldData = { role: admin.role, isActive: admin.isActive };
+
+        // Last Superadmin protection logic
+        if ((role && role !== 'superadmin' && admin.role === 'superadmin') || 
+            (isActive === false && admin.role === 'superadmin')) {
+            
+            const activeSuperadmins = await AdminUser.countDocuments({ role: 'superadmin', isActive: true });
+            
+            // If this is the last active superadmin (and we are changing role OR deactivating)
+            if (activeSuperadmins <= 1 && admin.isActive) {
+                return res.status(400).json({ message: 'Cannot modify last active Superadmin' });
+            }
         }
 
-        if (role) {
-            const allowedRoles = AdminUser.schema.path('role').enumValues;
-            if (!allowedRoles.includes(role)) {
-                return res.status(400).json({ message: `Invalid role. Allowed: ${allowedRoles.join(', ')}` });
-            }
-            if (admin.role === 'superadmin' && role !== 'superadmin') {
-                const superadminCount = await AdminUser.countDocuments({ role: 'superadmin', isActive: true });
-                if (superadminCount <= 1) {
-                     return res.status(400).json({ message: 'Cannot change the role of the last active superadmin.' });
-                }
-            }
-            admin.role = role;
-        }
-        if (isActive !== undefined) {
-             if (admin.role === 'superadmin' && isActive === false) {
-                 const superadminCount = await AdminUser.countDocuments({ role: 'superadmin', isActive: true });
-                 if (superadminCount <= 1 && admin.isActive) { // Jeśli to jest ten ostatni aktywny
-                      return res.status(400).json({ message: 'Cannot deactivate the last active superadmin.' });
-                 }
-             }
-            admin.isActive = isActive;
-        }
+        if (role) admin.role = role;
+        if (isActive !== undefined) admin.isActive = isActive;
 
         const updatedAdmin = await admin.save();
-        const adminResponse = await AdminUser.findById(updatedAdmin._id).select('-password');
-        res.json(adminResponse);
+        
+        await logAuditEvent('superadmin_updated_admin', { type: 'admin', id: req.adminUser._id }, 'admin_action', { type: 'admin', id: updatedAdmin._id }, { oldData, newData: { role, isActive } }, req);
 
-        await logAuditEvent(
-            'superadmin_updated_admin_account',
-            { type: 'admin', id: req.adminUser._id },
-            'admin_action',
-            { type: 'admin', id: adminResponse._id },
-            {
-                updatedFields: req.body, 
-                previousRole: oldRole,
-                previousIsActive: oldIsActive,
-                targetAdminUsername: adminResponse.username
-            }, req
-        );
-        res.json(adminResponse);
-
+        res.json(await AdminUser.findById(updatedAdmin._id).select('-password'));
     } catch (error) {
-        console.error('Superadmin Update Admin Error:', error);
-        if (error.name === 'ValidationError') return res.status(400).json({ message: error.message });
-        res.status(500).json({ message: 'Server Error updating admin account.' });
+        console.error('Update Admin Error:', error.message);
+        next(error);
     }
 };
 
-// @desc    Delete an admin account (cannot delete self, cannot delete last superadmin)
-// @route   DELETE /api/admin/management/admins/:adminId
-// @access  Private (Superadmin only)
-const deleteAdminAccount = async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
-    const adminIdToDelete = req.params.adminId;
-    const performingSuperadminId = req.adminUser._id;
+// Delete admin account
+const deleteAdminAccount = async (req, res, next) => {
+    const targetId = req.params.adminId;
+    const actorId = req.adminUser._id.toString();
 
-    if (adminIdToDelete === performingSuperadminId.toString()) {
-        return res.status(400).json({ message: 'Superadmin cannot delete their own account.' });
-    }
+    if (targetId === actorId) return res.status(400).json({ message: 'Cannot delete own account' });
 
     try {
-        const adminToDelete = await AdminUser.findById(adminIdToDelete);
-        if (!adminToDelete) {
-            return res.status(404).json({ message: 'Admin account to delete not found.' });
-        }
+        const adminToDelete = await AdminUser.findById(targetId);
+        if (!adminToDelete) return res.status(404).json({ message: 'Admin not found' });
 
         if (adminToDelete.role === 'superadmin') {
-            const superadminCount = await AdminUser.countDocuments({ role: 'superadmin' });
-            if (superadminCount <= 1) {
-                return res.status(400).json({ message: 'Cannot delete the last superadmin account.' });
-            }
+            const count = await AdminUser.countDocuments({ role: 'superadmin' });
+            if (count <= 1) return res.status(400).json({ message: 'Cannot delete last Superadmin' });
         }
 
-        await AdminUser.deleteOne({ _id: adminIdToDelete });
-        res.json({ message: `Admin account ${adminToDelete.username} deleted successfully.` });
+        await AdminUser.deleteOne({ _id: targetId });
 
-        await logAuditEvent(
-            'superadmin_deleted_admin_account',
-            { type: 'admin', id: req.adminUser._id },
-            'admin_action',
-            { type: 'admin', id: adminIdToDelete },
-            { deletedAdminUsername: adminToDelete.username }, req
-        );
-        res.json({ message: `Admin account ${adminToDelete.username} deleted successfully.` });
+        await logAuditEvent('superadmin_deleted_admin', { type: 'admin', id: req.adminUser._id }, 'admin_action', { type: 'admin', id: targetId }, { deletedUsername: adminToDelete.username }, req);
 
+        res.json({ message: 'Admin account deleted' });
     } catch (error) {
-        console.error('Superadmin Delete Admin Error:', error);
-        res.status(500).json({ message: 'Server Error deleting admin account.' });
+        console.error('Delete Admin Error:', error.message);
+        next(error);
     }
 };
-
 
 module.exports = {
     createAdminAccount,

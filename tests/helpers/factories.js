@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+
+// Models
 const User = require('../../models/User');
 const AdminUser = require('../../models/AdminUser');
 const Report = require('../../models/Report');
@@ -10,51 +12,46 @@ const Interest = require('../../models/Interest');
 const InterestCategory = require('../../models/InterestCategory');
 const UserInterest = require('../../models/UserInterest');
 const Friendship = require('../../models/Friendship');
+const Language = require('../../models/Language');
+const AuditLog = require('../../models/AuditLog');
+
+// --- Utility Functions ---
 
 const generateUnique = (prefix = '') => `${prefix}${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-exports.generateUnique = generateUnique;
 
-function uniqueCategoryName() {
-  return `cat_${crypto.randomBytes(6).toString('hex')}`;
-}
-exports.uniqueCategoryName = uniqueCategoryName;
+const uniqueCategoryName = () => `cat_${crypto.randomBytes(6).toString('hex')}`;
 global.uniqueCategoryName = uniqueCategoryName;
 
-let userCounterForFactory = 0; 
-function uniqueUsernameFactory(base = 'user') {
-  userCounterForFactory += 1;
-  return `${base}_${Date.now()}_${userCounterForFactory}`;
-}
-exports.uniqueUsernameFactory = uniqueUsernameFactory;
+let userCounter = 0;
+const uniqueUsername = (base = 'user') => `${base}_${Date.now()}_${++userCounter}`;
+
+const uniqueLanguageCode = () => {
+    const randomSuffix = crypto.randomBytes(2).toString('hex').slice(0, 2).toLowerCase();
+    return `l${randomSuffix}`;
+};
+
+// --- Data Factory Methods ---
 
 exports.createUser = async (overrides = {}) => {
     const defaults = {
-        username: overrides.username || uniqueUsernameFactory('user'),
-        email: overrides.email || `${uniqueUsernameFactory('email')}@example.com`,
+        username: overrides.username || uniqueUsername('user'),
+        email: overrides.email || `${uniqueUsername('email')}@example.com`,
         password: 'password123',
         isEmailVerified: false,
         isBanned: false,
         isDeleted: false,
         isTestAccount: false,
     };
-    const finalData = { ...defaults, ...overrides };
-    delete finalData.username;
-    delete finalData.email;
 
-    const dataToCreate = {...defaults};
-    if(overrides.username) dataToCreate.username = overrides.username;
-    if(overrides.email) dataToCreate.email = overrides.email;
-    if(overrides.password) dataToCreate.password = overrides.password; 
-    Object.assign(dataToCreate, overrides);
-
+    const data = { ...defaults, ...overrides };
 
     try {
-        return await User.create(dataToCreate);
+        return await User.create(data);
     } catch (err) {
-    if (err.code === 11000 && (err.keyPattern?.username || err.keyPattern?.email)) {
-        return await User.findOne({ username: dataToCreate.username });
-    }
-    throw err;
+        if (err.code === 11000) {
+            return await User.findOne({ username: data.username });
+        }
+        throw err;
     }
 };
 
@@ -67,7 +64,7 @@ exports.createTestUserAccount = async (overrides = {}) => {
 };
 
 exports.generateUserToken = (user) => {
-    if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET is not defined for user token generation");
+    if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET missing in test env");
     return jwt.sign({ id: user._id.toString(), type: 'user' }, process.env.JWT_SECRET, { expiresIn: '1h' });
 };
 
@@ -87,135 +84,128 @@ exports.createSuperAdmin = async (overrides = {}) => {
 
 exports.createReport = async ({ reportedBy, reportedUser, reportedMessage, overrides = {} }) => {
     const defaults = {
-        reportedBy: reportedBy._id || reportedBy,
+        reportedBy: reportedBy?._id || reportedBy,
+        reportedUser: reportedUser?._id || reportedUser,
+        reportedMessage: reportedMessage?._id || reportedMessage,
         reportType: 'spam',
         reason: 'Default test report reason.',
         status: 'pending',
     };
-    if (reportedUser) defaults.reportedUser = reportedUser._id || reportedUser;
-    if (reportedMessage) defaults.reportedMessage = reportedMessage._id || reportedMessage;
 
     if (!defaults.reportedUser && !defaults.reportedMessage) {
-        throw new Error("Report must have either reportedUser or reportedMessage");
+        throw new Error("Report target required (user or message)");
     }
     return Report.create({ ...defaults, ...overrides });
 };
 
-exports.createChat = async (participantsArray) => {
-    if (!participantsArray || participantsArray.length < 2) {
-        throw new Error("Chat requires at least two participants");
-    }
-    return Chat.create({ participants: participantsArray.map(p => p._id || p) });
+exports.createChat = async (participants) => {
+    if (!participants || participants.length < 2) throw new Error("Chat needs 2+ participants");
+    return Chat.create({ participants: participants.map(p => p._id || p) });
 };
 
 exports.createMessage = async ({ chatId, senderId, content, overrides = {} }) => {
-  let finalContent = content ?? generateUnique('Test message content ');
-  if (finalContent && typeof finalContent === 'object') {
-    finalContent = JSON.stringify(finalContent);
-  }
-
-  const defaults = {
-    chatId: chatId._id || chatId,
-    senderId: senderId._id || senderId,
-    content: finalContent,
-  };
-  return Message.create({ ...defaults, ...overrides });
+    return Message.create({
+        chatId: chatId._id || chatId,
+        senderId: senderId._id || senderId,
+        content: content || generateUnique('Test msg '),
+        ...overrides
+    });
 };
 
 exports.createInterestCategory = async (overrides = {}) => {
-    const defaults = {
+    return InterestCategory.create({
         name: overrides.name || uniqueCategoryName(),
-        description: 'Default category description.'
-    };
-    return InterestCategory.create({ ...defaults, ...overrides });
+        description: 'Test category',
+        ...overrides
+    });
 };
 
-
 exports.createInterest = async (options = {}) => {
-    const { category, overrides, ...rest } = options;
-    const defaults = {
+    const { category, categoryId, overrides, ...rest } = options;
+    const catId = category?._id || category || categoryId;
+
+    return Interest.create({
         name: generateUnique('Interest_'),
-        description: 'Default interest description.',
+        description: 'Test interest',
         isArchived: false,
-    };
-    const interestData = { ...defaults, ...rest, ...(overrides || {}) };
-    if (category) {
-        interestData.category = category._id || category;
-    } else if (options.categoryId) { 
-        interestData.category = options.categoryId;
-    }
-    return Interest.create(interestData);
+        category: catId,
+        ...rest,
+        ...overrides
+    });
 };
 
 exports.addUserInterestEntry = async ({ userId, interestId, overrides = {} }) => {
-    const defaults = {
-        userId: userId._id || userId,
-        interestId: interestId._id || interestId,
-        customDescription: generateUnique('Custom desc ')
-    };
-    return UserInterest.create({ ...defaults, ...overrides });
+    return UserInterest.create({
+        userId: userId?._id || userId,
+        interestId: interestId?._id || interestId,
+        customDescription: 'Custom desc',
+        ...overrides
+    });
 };
 
 exports.createFriendship = async ({ user1, user2, requestedBy, status = 'pending', overrides = {} }) => {
-    const order = (a, b) => (a.toString() < b.toString() ? [a, b] : [b, a]);
-    const [u1_id, u2_id] = order(user1._id || user1, user2._id || user2);
-    const requestedBy_id = (requestedBy?._id || requestedBy) ?? u1_id;
+    const id1 = user1._id || user1;
+    const id2 = user2._id || user2;
+    
+    const [u1, u2] = id1.toString() < id2.toString() ? [id1, id2] : [id2, id1];
+    const requester = (requestedBy?._id || requestedBy) ?? u1;
 
-    let friendship = await Friendship.findOne({ user1: u1_id, user2: u2_id });
-
-    const dataToSet = {
-        requestedBy: requestedBy_id,
+    const data = {
+        user1: u1,
+        user2: u2,
+        requestedBy: requester,
         status,
-        friendshipType: overrides.friendshipType || 'unverified',
-        isBlocked: status === 'blocked' || overrides.isBlocked === true,
-        blockedBy: status === 'blocked'
-            ? (overrides.blockedBy || requestedBy_id) 
-            : (overrides.isBlocked === true ? (overrides.blockedBy || requestedBy_id) : null),
+        friendshipType: 'unverified',
+        isBlocked: status === 'blocked',
+        blockedBy: status === 'blocked' ? requester : null,
         ...overrides
     };
 
-    if (friendship) {
-        friendship.status = dataToSet.status;
-        if (
-            dataToSet.friendshipType === 'verified' ||
-            friendship.friendshipType !== 'verified'
-            ) {
-            friendship.friendshipType = dataToSet.friendshipType;
-        }
-        friendship.isBlocked = dataToSet.isBlocked;
-        friendship.blockedBy = dataToSet.blockedBy;
-        return friendship.save();
-    } else {
-        const defaultsForCreation = {
-            user1: u1_id,
-            user2: u2_id,
-        };
-        return Friendship.create({ ...defaultsForCreation, ...dataToSet });
-    }
+    return Friendship.findOneAndUpdate(
+        { user1: u1, user2: u2 },
+        { $set: data },
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
 };
 
+exports.createLanguage = async (overrides = {}) => {
+    const defaults = {
+        code: overrides.code || uniqueLanguageCode(),
+        name: 'Test Language',
+        nativeName: 'Test Native',
+        isArchived: false,
+    };
+    return Language.create({ ...defaults, ...overrides });
+};
+
+exports.createAuditLog = async (overrides = {}) => {
+    const defaults = {
+        level: 'info',
+        actorType: 'system',
+        action: 'test_action',
+        timestamp: new Date()
+    };
+    return AuditLog.create({ ...defaults, ...overrides });
+};
+
+// --- Cleanup Helpers ---
 
 exports.clearDatabase = async () => {
     const collections = mongoose.connection.collections;
-    for (const key in collections) {
-        const collection = collections[key];
-        await collection.deleteMany({});
-    }
+    await Promise.all(Object.values(collections).map(c => c.deleteMany({})));
 };
 
-exports.clearSpecificCollections = async (collectionNames = []) => {
-    if (!Array.isArray(collectionNames)) {
-        return;
-    }
+exports.clearSpecificCollections = async (names = []) => {
     const collections = mongoose.connection.collections;
-    for (const name of collectionNames) {
-        const collectionKey = name.toLowerCase() + (name.endsWith('s') ? '' : 's'); 
-        if (collections[collectionKey]) {
-            await collections[collectionKey].deleteMany({});
-        } else if (collections[name.toLowerCase()]) { 
-            await collections[name.toLowerCase()].deleteMany({});
-        } else {
-            console.warn(`Collection "${name}" (or "${collectionKey}") not found for clearing.`);
-        }
-    }
+    const promises = names.map(name => {
+        const collection = collections[name] || collections[name.toLowerCase()] || collections[name + 's'];
+        return collection ? collection.deleteMany({}) : Promise.resolve();
+    });
+    await Promise.all(promises);
 };
+
+// Exports helper functions
+exports.generateUnique = generateUnique;
+exports.uniqueCategoryName = uniqueCategoryName;
+exports.uniqueUsernameFactory = uniqueUsername;
+exports.uniqueLanguageCode = uniqueLanguageCode;

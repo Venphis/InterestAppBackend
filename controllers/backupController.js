@@ -1,141 +1,117 @@
-// controllers/backupController.js
 const User = require('../models/User');
 const { validationResult } = require('express-validator');
 const crypto = require('crypto');
 
-// @desc    Save encrypted key backup for the logged-in user
-// @route   POST /api/backups
-// @access  Private
+// Saves a full key backup (public/private keys + encryption params)
 const saveBackup = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    // Pobieramy dane zgodnie z nową strukturą
-    const {
-        publicKey,
-        encryptedPrivateKey,
-        encryptedBackupKey,
-        passwordDerivationParams,
-        backupEncryptionParams,
-        privateEncryptionParams
-    } = req.body;
-
-    const userId = req.user._id;
-
     try {
-        const updateData = {
-            'backup.publicKey': publicKey,
-            'backup.encryptedPrivateKey': encryptedPrivateKey,
-            'backup.encryptedBackupKey': encryptedBackupKey,
-            'backup.passwordDerivationParams': passwordDerivationParams,
-            'backup.backupEncryptionParams': backupEncryptionParams,
-            'backup.privateEncryptionParams': privateEncryptionParams
-        };
+        const userId = req.user._id;
+        
+        // Construct the nested update object
+        const backupData = {};
+        const fields = [
+            'publicKey', 
+            'encryptedPrivateKey', 
+            'encryptedBackupKey', 
+            'passwordDerivationParams', 
+            'backupEncryptionParams', 
+            'privateEncryptionParams'
+        ];
 
-        const user = await User.findByIdAndUpdate(userId, { $set: updateData }, { new: true });
+        fields.forEach(field => {
+            if (req.body[field]) backupData[`backup.${field}`] = req.body[field];
+        });
 
-        if (!user) {
-            return res.status(404).json({ message: "User not found." });
-        }
-        res.status(200).json({ message: 'Backup saved successfully.' });
+        const user = await User.findByIdAndUpdate(userId, { $set: backupData }, { new: true });
+
+        if (!user) return res.status(404).json({ message: "User not found" });
+        
+        res.status(200).json({ message: 'Backup saved successfully' });
     } catch (error) {
-        console.error('[backupController] Save Backup Error:', error);
+        console.error('Save Backup Error:', error.message);
         next(error);
     }
 };
 
-// @desc    Get encrypted key backup for the logged-in user
-// @route   GET /api/backups
-// @access  Private
+// Retrieves the user's encrypted backup data
 const getBackup = async (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-
-    const userId = req.user._id;
-
     try {
-        // Musimy jawnie wybrać pole 'backup', ponieważ ma `select: false` w schemacie
-        const user = await User.findById(userId).select('+backup');
+        const user = await User.findById(req.user._id).select('+backup');
 
-        if (!user || !user.backup || !user.backup.encryptedBackupKey) {
-            return res.status(404).json({ message: 'No backup found for this user.' });
+        if (!user?.backup?.encryptedBackupKey) {
+            return res.status(404).json({ message: 'No backup found' });
         }
         
         res.status(200).json(user.backup);
     } catch (error) {
-        console.error('[backupController] Get Backup Error:', error);
         next(error);
     }
 };
 
+// Updates only the password-related backup components (e.g. after password change)
 const updateBackupPassword = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const {
-        encryptedBackupKey,
-        passwordDerivationParams,
-        backupEncryptionParams // Nowe parametry szyfrowania dla nowego klucza backupowego
-    } = req.body;
-    const userId = req.user._id;
+    const { encryptedBackupKey, passwordDerivationParams, backupEncryptionParams } = req.body;
 
     try {
-        const user = await User.findById(userId).select('+backup');
-        if (!user || !user.backup || !user.backup.encryptedPrivateKey) {
-            return res.status(404).json({ message: "No existing backup found to update password for." });
+        const user = await User.findById(req.user._id).select('+backup');
+        
+        if (!user?.backup?.encryptedPrivateKey) {
+            return res.status(404).json({ message: "No existing backup to update" });
         }
 
-        // Aktualizujemy klucz backupowy i związane z nim parametry
         user.backup.encryptedBackupKey = encryptedBackupKey;
-        if (passwordDerivationParams) {
-            user.backup.passwordDerivationParams = passwordDerivationParams;
-        }
-        if (backupEncryptionParams) {
-            user.backup.backupEncryptionParams = backupEncryptionParams;
-        }
+        if (passwordDerivationParams) user.backup.passwordDerivationParams = passwordDerivationParams;
+        if (backupEncryptionParams) user.backup.backupEncryptionParams = backupEncryptionParams;
 
         await user.save();
 
-        res.status(200).json({ message: 'Backup password components updated successfully.' });
-
+        res.status(200).json({ message: 'Backup password updated' });
     } catch (error) {
-        console.error('[backupController] Update Backup Password Error:', error);
+        console.error('Update Backup Password Error:', error.message);
         next(error);
     }
 };
 
+// Verifies if the supplied password verifier matches the stored one
 const verifyBackupPassword = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { passwordVerifier } = req.body; // Klient przysyła obliczony weryfikator
+    const { passwordVerifier } = req.body;
+
     try {
-        // Pobieramy cały backup, w którym jest passwordDerivationParams
         const user = await User.findById(req.user._id).select('+backup');
 
-        if (!user || !user.backup || !user.backup.passwordDerivationParams || !user.backup.passwordDerivationParams.verificator) {
-            return res.status(404).json({ message: "No backup or verifier found for this user." });
+        const storedVerificator = user?.backup?.passwordDerivationParams?.verificator;
+
+        if (!storedVerificator) {
+            return res.status(404).json({ message: "No backup verifier found" });
         }
 
-        // Pobieramy zapisany weryfikator z zagnieżdżonego obiektu
-        const storedVerifier = Buffer.from(user.backup.passwordDerivationParams.verificator, 'base64');
-        const suppliedVerifier = Buffer.from(passwordVerifier, 'base64');
+        const storedBuf = Buffer.from(storedVerificator, 'base64');
+        const suppliedBuf = Buffer.from(passwordVerifier, 'base64');
 
-        if (storedVerifier.length !== suppliedVerifier.length) {
-             return res.status(400).json({ valid: false, message: "Invalid password." });
+        if (storedBuf.length !== suppliedBuf.length) {
+             return res.status(400).json({ valid: false, message: "Invalid password" });
         }
 
-        const areEqual = crypto.timingSafeEqual(storedVerifier, suppliedVerifier);
+        const isValid = crypto.timingSafeEqual(storedBuf, suppliedBuf);
 
-        if (areEqual) {
-            res.status(200).json({ valid: true, message: "Password is correct." });
+        if (isValid) {
+            res.status(200).json({ valid: true, message: "Password correct" });
         } else {
-            res.status(400).json({ valid: false, message: "Invalid password." });
+            res.status(400).json({ valid: false, message: "Invalid password" });
         }
     } catch (error) {
-        console.error('[backupController] Verify Backup Password Error:', error);
+        console.error('Verify Backup Error:', error.message);
         next(error);
     }
 };
 
-module.exports = { saveBackup, getBackup, updateBackupPassword, verifyBackupPassword}; 
+module.exports = { saveBackup, getBackup, updateBackupPassword, verifyBackupPassword };

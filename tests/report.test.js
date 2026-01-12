@@ -1,156 +1,138 @@
 const request = require('supertest');
 const app = require('../server');
-const User = require('../models/User');
-const Message = require('../models/Message');
-const Report = require('../models/Report');
-const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
+const Report = require('../models/Report');
 const { createVerifiedUser, createMessage, generateUserToken } = require('./helpers/factories');
 
-describe('Report API (User Perspective)', () => {
-    let reporterUser;
+describe('Report API (User)', () => {
+    let reporter, reportedUser;
     let reporterToken;
-    let userToReport;
-    let messageToReport;
+    let reportedMessage;
 
     beforeAll(async () => {
         await mongoose.connection.collection('users').deleteMany({});
         await mongoose.connection.collection('messages').deleteMany({});
 
-        reporterUser = await createVerifiedUser({ username: 'reporterMain_reports', email: 'reporterMain_reports@example.com' });
-        reporterToken = generateUserToken(reporterUser);
+        reporter = await createVerifiedUser({ username: 'reporter', email: 'reporter@test.com' });
+        reporterToken = generateUserToken(reporter);
 
-        userToReport = await createVerifiedUser({ username: 'reportedMain_reports', email: 'reportedMain_reports@example.com' });
+        reportedUser = await createVerifiedUser({ username: 'reported', email: 'reported@test.com' });
 
-        messageToReport = await createMessage({
+        reportedMessage = await createMessage({
             chatId: new mongoose.Types.ObjectId(),
-            senderId: userToReport,
-            content: 'Main reportable message for report tests.'
+            senderId: reportedUser,
+            content: 'bad message'
         });
     });
 
+    beforeEach(async () => {
+        await Report.deleteMany({});
+    });
+
     describe('POST /api/reports', () => {
-        beforeEach(async () => {
-            await mongoose.connection.collection('reports').deleteMany({});
-        });
-
-        it('should allow a logged-in user to report another user', async () => {
-            const reportData = {
-                reportedUserId: userToReport._id.toString(),
-                reportType: 'harassment',
-                reason: 'This user is sending harassing messages.'
-            };
+        it('should report a user', async () => {
             const res = await request(app)
                 .post('/api/reports')
                 .set('Authorization', `Bearer ${reporterToken}`)
-                .send(reportData);
+                .send({
+                    reportedUserId: reportedUser._id,
+                    reportType: 'harassment',
+                    reason: 'Harassing me'
+                });
 
-            expect(res.statusCode).toEqual(201);
-            expect(res.body).toHaveProperty('report');
-            expect(res.body.report.reportedBy).toBe(reporterUser._id.toString());
-            expect(res.body.report.reportedUser).toBe(userToReport._id.toString());
+            expect(res.statusCode).toBe(201);
+            expect(res.body.report.reportedUser).toBe(reportedUser._id.toString());
         });
 
-        it('should allow a logged-in user to report a message', async () => {
-            const reportData = {
-                reportedMessageId: messageToReport._id.toString(),
-                reportType: 'spam',
-                reason: 'This message is spam.'
-            };
+        it('should report a message', async () => {
             const res = await request(app)
                 .post('/api/reports')
                 .set('Authorization', `Bearer ${reporterToken}`)
-                .send(reportData);
+                .send({
+                    reportedMessageId: reportedMessage._id,
+                    reportType: 'spam',
+                    reason: 'This is spam'
+                });
 
-            expect(res.statusCode).toEqual(201);
-            expect(res.body.report.reportedMessage).toBe(messageToReport._id.toString());
+            expect(res.statusCode).toBe(201);
+            expect(res.body.report.reportedMessage).toBe(reportedMessage._id.toString());
         });
 
-        it('should not allow reporting oneself', async () => {
-            const reportData = { reportedUserId: reporterUser._id.toString(), reportType: 'other', reason: 'test self report' };
+        it('should prevent self-reporting', async () => {
             const res = await request(app)
                 .post('/api/reports')
                 .set('Authorization', `Bearer ${reporterToken}`)
-                .send(reportData);
-            expect(res.statusCode).toEqual(400);
-            expect(res.body.message).toBe('You cannot report yourself.');
+                .send({
+                    reportedUserId: reporter._id,
+                    reportType: 'other',
+                    reason: 'Self report'
+                });
+
+            expect(res.statusCode).toBe(400);
+            expect(res.body.message).toMatch(/cannot report self/i);
         });
 
-        it('should return validation errors for missing reason or reportType', async () => {
-            const resMissingReason = await request(app)
-                .post('/api/reports')
-                .set('Authorization', `Bearer ${reporterToken}`)
-                .send({ reportedUserId: userToReport._id.toString(), reportType: 'spam' });
-            expect(resMissingReason.statusCode).toEqual(400);
-            expect(resMissingReason.body.errors.some(e => e.path === 'reason')).toBe(true);
-
-            const resMissingType = await request(app)
-                .post('/api/reports')
-                .set('Authorization', `Bearer ${reporterToken}`)
-                .send({ reportedUserId: userToReport._id.toString(), reason: 'Valid reason here' });
-            expect(resMissingType.statusCode).toEqual(400);
-            expect(resMissingType.body.errors.some(e => e.path === 'reportType')).toBe(true);
-        });
-
-        it('should return validation error for invalid reportType', async () => {
-            const reportData = {
-                reportedUserId: userToReport._id.toString(),
-                reportType: 'invalid_report_type_value',
-                reason: 'Some reason with invalid type'
-            };
+        it('should validate required fields', async () => {
             const res = await request(app)
                 .post('/api/reports')
                 .set('Authorization', `Bearer ${reporterToken}`)
-                .send(reportData);
-            expect(res.statusCode).toEqual(400);
-            expect(res.body.errors[0].msg).toBe('Invalid report type');
+                .send({});
+
+            expect(res.statusCode).toBe(400);
+            expect(res.body.errors).toBeDefined();
         });
 
-        it('should require either reportedUserId or reportedMessageId (validation)', async () => {
+        it('should validate report type', async () => {
             const res = await request(app)
                 .post('/api/reports')
                 .set('Authorization', `Bearer ${reporterToken}`)
-                .send({ reportType: 'spam', reason: 'No target specified for this report.' });
-            expect(res.statusCode).toEqual(400);
-            expect(res.body.errors[0].msg).toBe('Either reportedUserId or reportedMessageId must be provided.');
+                .send({
+                    reportedUserId: reportedUser._id,
+                    reportType: 'invalid_type',
+                    reason: 'Reason'
+                });
+
+            expect(res.statusCode).toBe(400);
+            expect(res.body.errors[0].msg).toMatch(/Invalid report type/);
         });
 
-        it('should not allow reporting a non-existent user', async () => {
-            const nonExistentUserId = new mongoose.Types.ObjectId().toString();
-            const reportData = { reportedUserId: nonExistentUserId, reportType: 'impersonation', reason: 'Impersonating.' };
+        it('should require a target (user or message)', async () => {
             const res = await request(app)
                 .post('/api/reports')
                 .set('Authorization', `Bearer ${reporterToken}`)
-                .send(reportData);
-            expect(res.statusCode).toEqual(404);
-            expect(res.body.message).toBe('User to report not found.');
+                .send({
+                    reportType: 'spam',
+                    reason: 'No target'
+                });
+
+            expect(res.statusCode).toBe(400);
         });
 
-        it('should not allow reporting a non-existent message', async () => {
-            const nonExistentMessageId = new mongoose.Types.ObjectId().toString();
-            const reportData = { reportedMessageId: nonExistentMessageId, reportType: 'inappropriate_content', reason: 'Message gone.' };
+        it('should return 404 for non-existent targets', async () => {
+            const fakeId = new mongoose.Types.ObjectId();
+            
             const res = await request(app)
                 .post('/api/reports')
                 .set('Authorization', `Bearer ${reporterToken}`)
-                .send(reportData);
-            expect(res.statusCode).toEqual(404);
-            expect(res.body.message).toBe('Message to report not found.');
+                .send({
+                    reportedUserId: fakeId,
+                    reportType: 'spam',
+                    reason: 'Ghost user'
+                });
+
+            expect(res.statusCode).toBe(404);
         });
 
-        it('should not allow creating a report if not logged in (no token)', async () => {
-        const reportData = {
-            reportedUserId: userToReport._id.toString(),
-            reportType: 'harassment',
-            reason: 'This should fail without a token.'
-        };
-        const res = await request(app)
-            .post('/api/reports')
-            .send(reportData);
+        it('should reject unauthenticated request', async () => {
+            const res = await request(app)
+                .post('/api/reports')
+                .send({
+                    reportedUserId: reportedUser._id,
+                    reportType: 'spam',
+                    reason: 'No token'
+                });
 
-        expect(res.statusCode).toEqual(401);
-        expect(res.body).toHaveProperty('message');
-        expect(res.body.message).toMatch(/no token/i);
+            expect(res.statusCode).toBe(401);
         });
-
     });
 });

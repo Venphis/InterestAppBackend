@@ -8,37 +8,48 @@ const { protectAdmin, authorizeAdminRole } = require('../middleware/adminAuthMid
 
 const router = express.Router();
 
+// Only Superadmins can manage other admin accounts
 router.use(protectAdmin);
-router.use(authorizeAdminRole('superadmin')); 
+router.use(authorizeAdminRole('superadmin'));
 
-const adminIdValidation = [param('adminId').isMongoId().withMessage('Invalid Admin Account ID format')];
-const allowedAdminRoles = ['superadmin', 'admin', 'moderator'];
+const ALLOWED_ROLES = ['superadmin', 'admin', 'moderator'];
+
+// --- Validation Rules ---
+
+const adminIdValidation = [
+    param('adminId').isMongoId().withMessage('Invalid ID format')
+];
+
+const createAdminValidation = [
+    body('username').trim().notEmpty()
+        .isLength({ min: 3, max: 30 })
+        .matches(/^[a-zA-Z0-9_]+$/).withMessage('Alphanumeric & underscore only'),
+    body('password').isLength({ min: 8, max: 100 }),
+    body('role').isIn(ALLOWED_ROLES).withMessage(`Invalid role`),
+    body('isActive').optional().isBoolean().toBoolean()
+];
+
+const updateAdminValidation = [
+    ...adminIdValidation,
+    body('role').optional().isIn(ALLOWED_ROLES),
+    body('isActive').optional().isBoolean().toBoolean(),
+    body().custom((val, { req }) => {
+        if (req.body.role === undefined && req.body.isActive === undefined) {
+            throw new Error('Provide at least role or isActive');
+        }
+        return true;
+    })
+];
+
+// --- Routes ---
 
 router.route('/admins')
-    .post([
-        body('username').trim().notEmpty().withMessage('Username is required')
-            .isLength({ min: 3, max: 30 }).withMessage('Username must be 3-30 characters')
-            .matches(/^[a-zA-Z0-9_]+$/).withMessage('Username can only contain letters, numbers, and underscores'),
-        body('password').isLength({ min: 8, max: 100 }).withMessage('Password must be 8-100 characters'),
-        body('role').notEmpty().withMessage('Role is required')
-            .isIn(allowedAdminRoles).withMessage(`Invalid role. Allowed: ${allowedAdminRoles.join(', ')}`),
-        body('isActive').optional().isBoolean().withMessage('isActive must be a boolean').toBoolean()
-    ], createAdminAccount)
-    .get(getAllAdminAccounts); 
+    .post(createAdminValidation, createAdminAccount)
+    .get(getAllAdminAccounts);
 
 router.route('/admins/:adminId')
     .get(adminIdValidation, getAdminAccountById)
-    .put([
-        ...adminIdValidation,
-        body('role').optional().isIn(allowedAdminRoles).withMessage(`Invalid role. Allowed: ${allowedAdminRoles.join(', ')}`),
-        body('isActive').optional().isBoolean().withMessage('isActive must be a boolean').toBoolean(),
-        body().custom((value, { req }) => {
-            if (req.body.role === undefined && req.body.isActive === undefined) {
-                throw new Error('At least one field (role or isActive) must be provided for update.');
-            }
-            return true;
-        })
-    ], updateAdminAccount)
+    .put(updateAdminValidation, updateAdminAccount)
     .delete(adminIdValidation, deleteAdminAccount);
 
 module.exports = router;

@@ -1,10 +1,10 @@
-// controllers/keyController.js
 const User = require('../models/User');
-const Message = require('../models/Message'); // <-- DODAJ IMPORT
-const Chat = require('../models/Chat');       // <-- DODAJ IMPORT (opcjonalnie, jeśli chcesz czyścić czaty)
+const Message = require('../models/Message');
+const Chat = require('../models/Chat');
 const { validationResult } = require('express-validator');
 const logAuditEvent = require('../utils/auditLogger');
 
+// Publish or rotate user's public key
 const publishPublicKey = async (req, res, next) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
@@ -14,73 +14,64 @@ const publishPublicKey = async (req, res, next) => {
 
     try {
         const user = await User.findById(userId);
-        if (!user) return res.status(404).json({ message: 'User not found.' });
+        if (!user) return res.status(404).json({ message: 'User not found' });
 
-        const isUpdate = !!user.publicKey;
+        const isRotation = !!user.publicKey;
 
         user.publicKey = publicKey;
-        // user.lastKeyRotationDate = new Date(); // To też warto zostawić
         await user.save({ validateBeforeSave: false });
 
-        if (isUpdate) {
-            // Znajdź czaty użytkownika
-            const userChats = await Chat.find({ participants: userId });
+        if (isRotation) {
+            // Security Protocol: Wipe all chat history upon key rotation
+            // as old messages can no longer be decrypted by peers.
+            const userChats = await Chat.find({ participants: userId }).select('_id');
             const chatIds = userChats.map(c => c._id);
 
             if (chatIds.length > 0) {
-                // Usuń wszystkie wiadomości z tych czatów
                 await Message.deleteMany({ chatId: { $in: chatIds } });
-
-                // Zaktualizuj czaty (wyczyść lastMessage)
+                
                 await Chat.updateMany(
                     { _id: { $in: chatIds } },
                     { 
                         $unset: { lastMessage: "", lastMessageTimestamp: "" },
-                        $set: { lastResetDate: new Date() } // Opcjonalnie: flaga resetu
+                        $set: { lastResetDate: new Date() } 
                     }
                 );
             }
-            await logAuditEvent('user_rotated_key_wiped_history', { type: 'user', id: userId }, 'warn', {}, { chatsAffected: chatIds.length }, req);
-             res.status(200).json({ message: 'Public key updated. Chat history cleared for security.' }); // Inny komunikat
+
+            await logAuditEvent('user_rotated_key_history_wiped', { type: 'user', id: userId }, 'warn', {}, { chatsAffected: chatIds.length }, req);
+            return res.status(200).json({ message: 'Key rotated. Chat history wiped for security.' });
         } else {
-             await logAuditEvent('user_published_public_key', { type: 'user', id: userId }, 'info', {}, {}, req);
-             res.status(200).json({ message: 'Public key published successfully.' });
+            await logAuditEvent('user_published_initial_key', { type: 'user', id: userId }, 'info', {}, {}, req);
+            return res.status(200).json({ message: 'Public key published.' });
         }
 
     } catch (error) {
-        console.error('[keyController] Publish Key Error:', error);
+        console.error('Publish Key Error:', error.message);
         next(error);
     }
 };
 
-// @desc    Get the public key for a specific user
-// @route   GET /api/keys/:userId
-// @access  Private
+// Retrieve a user's public key
 const getPublicKey = async (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-
-    const { userId } = req.params;
-
     try {
-        const user = await User.findById(userId)
-                               .select('publicKey username profile.displayName') // Zwróć też username/displayName do weryfikacji
-                               .where({ isDeleted: false, isBanned: false });
+        const user = await User.findById(req.params.userId)
+            .select('publicKey username profile.displayName')
+            .where({ isDeleted: false, isBanned: false });
 
-        if (!user || !user.publicKey) {
-            return res.status(404).json({ message: 'User not found or has not published a public key.' });
+        if (!user?.publicKey) {
+            return res.status(404).json({ message: 'User key not found' });
         }
 
         res.status(200).json({
             userId: user._id,
             username: user.username,
-            displayName: user.profile.displayName,
+            displayName: user.profile?.displayName,
             publicKey: user.publicKey
         });
     } catch (error) {
-        console.error('[keyController] Get Public Key Error:', error);
         next(error);
     }
 };
 
-module.exports = { publishPublicKey, getPublicKey }; // Zmieniono getPublicKeys na getPublicKey
+module.exports = { publishPublicKey, getPublicKey };
