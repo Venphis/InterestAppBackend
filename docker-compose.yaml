@@ -11,7 +11,7 @@ services:
     volumes:
       - ./:/usr/src/app
       # To prevent issues with node_modules in the bind mount
-      - /usr/src/app/node_modules
+      - node_modules:/usr/src/app/node_modules
     depends_on:
       - mongo_db
     environment:
@@ -32,3 +32,4 @@ services:
 
 volumes:
   mongo-data:
+  node_modules:

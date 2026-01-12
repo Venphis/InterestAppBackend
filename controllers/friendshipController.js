@@ -2,6 +2,7 @@ const Friendship = require('../models/Friendship');
 const User = require('../models/User');
 const mongoose = require('mongoose'); 
 const { validationResult } = require('express-validator');
+const { SOCKET_EVENT } = require('../socket/WSEvent');
 
 const orderIdsForQuery = (id1, id2) => {
     const strId1 = id1.toString();
@@ -355,6 +356,14 @@ const blockFriendship = async (req, res, next) => {
         friendship.blockedBy = currentUserId;
         friendship.isBlocked = true;
         const updatedFriendship = await friendship.save();
+        
+
+        const io = req.app.get('socketio');
+        if (!currentUserId.equals(friendship.user1)) {
+            io.to(friendship.user1.toString()).emit(SOCKET_EVENT.BLOCK, currentUserId.toString())
+        } else {
+            io.to(friendship.user2.toString()).emit(SOCKET_EVENT.BLOCK, currentUserId.toString())
+        }
 
         res.status(200).json({ message: 'Friendship blocked.', friendship: updatedFriendship.toObject({ getters:false, virtuals:false }) });
     } catch (error) {
@@ -388,6 +397,13 @@ const unblockFriendship = async (req, res, next) => {
         friendship.isBlocked = false; 
         friendship.blockedBy = null; 
         const updatedFriendship = await friendship.save();
+        
+        const io = req.app.get('socketio');
+        if (!currentUserId.equals(friendship.user1)) {
+            io.to(friendship.user1.toString()).emit(SOCKET_EVENT.UNBLOCK, currentUserId.toString())
+        } else {
+            io.to(friendship.user2.toString()).emit(SOCKET_EVENT.UNBLOCK, currentUserId.toString())
+        }
 
         res.status(200).json({ message: 'Friendship unblocked.', friendship: updatedFriendship.toObject({ getters:false, virtuals:false }) });
     } catch (error) {

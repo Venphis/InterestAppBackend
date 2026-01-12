@@ -34,6 +34,9 @@ const adminManagementRoutes = require('./routes/adminManagementRoutes');
 const adminAuditLogRoutes = require('./routes/adminAuditLogRoutes');
 const adminLanguageRoutes = require('./routes/adminLanguageRoutes');
 
+// socket related imports
+const { setupSocketCallbacks } = require('./socket/setupSocketCallbacks')
+
 dotenv.config();
 
 // Fail fast: verify critical JWT secrets before starting
@@ -73,6 +76,18 @@ app.get('/', (req, res) => {
   res.send(`API is running.`);
 });
 
+// Socket.io setup
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {
+  pingTimeout: 60000,
+  cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] },
+});
+
+// Expose Socket.io instance to the app
+app.set('socketio', io);
+
+setupSocketCallbacks(io);
+
 // Register API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -93,52 +108,6 @@ app.use('/api/admin/interests', adminInterestRoutes);
 app.use('/api/admin/management', adminManagementRoutes);
 app.use('/api/admin/audit-logs', adminAuditLogRoutes);
 app.use('/api/admin/languages', adminLanguageRoutes);
-
-// Socket.io setup
-const httpServer = http.createServer(app);
-const io = new Server(httpServer, {
-  pingTimeout: 60000,
-  cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] },
-});
-
-// Expose Socket.io instance to the app
-app.set('socketio', io);
-
-let onlineUsers = {};
-
-io.on("connection", (socket) => {
-  if (process.env.NODE_ENV !== 'test') console.log("Client connected:", socket.id);
-
-  // Map user ID to socket ID
-  socket.on('setup', (userData) => {
-    if (!userData || !userData._id) return;
-    socket.join(userData._id.toString());
-    onlineUsers[userData._id.toString()] = socket.id;
-    socket.emit('connected');
-  });
-
-  socket.on('join chat', (room) => socket.join(room.toString()));
-
-  // Broadcast new messages to chat participants
-  socket.on('new message', (newMessageReceived) => {
-    const chat = newMessageReceived.chatId;
-    if (!chat || !chat.participants) return;
-
-    chat.participants.forEach((participant) => {
-      if (participant._id.toString() === newMessageReceived.senderId._id.toString()) return;
-      io.to(participant._id.toString()).emit("message received", newMessageReceived);
-    });
-  });
-
-  socket.on('typing', (room) => socket.in(room.toString()).emit('typing', room));
-  socket.on('stop typing', (room) => socket.in(room.toString()).emit('stop typing', room));
-
-  socket.on("disconnect", () => {
-    Object.keys(onlineUsers).forEach(key => {
-      if (onlineUsers[key] === socket.id) delete onlineUsers[key];
-    });
-  });
-});
 
 // 404 Handler
 app.use((req, res, next) => {
