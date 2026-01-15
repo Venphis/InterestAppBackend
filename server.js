@@ -34,9 +34,6 @@ const adminAuditLogRoutes = require('./routes/adminAuditLogRoutes');
 const adminLanguageRoutes = require('./routes/adminLanguageRoutes');
 const { notFound, globalErrorHandler } = require('./middleware/errorMiddleware');
 
-// socket related imports
-const { setupSocketCallbacks } = require('./socket/setupSocketCallbacks')
-
 dotenv.config();
 
 // Fail fast: verify critical JWT secrets before starting
@@ -76,18 +73,6 @@ app.get('/', (req, res) => {
   res.send(`API is running.`);
 });
 
-// Socket.io setup
-const httpServer = http.createServer(app);
-const io = new Server(httpServer, {
-  pingTimeout: 60000,
-  cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] },
-});
-
-// Expose Socket.io instance to the app
-app.set('socketio', io);
-
-setupSocketCallbacks(io);
-
 // Register API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -108,7 +93,6 @@ app.use('/api/admin/management', adminManagementRoutes);
 app.use('/api/admin/audit-logs', adminAuditLogRoutes);
 app.use('/api/admin/languages', adminLanguageRoutes);
 
-<<<<<<< HEAD
 // Error handling middleware
 app.use(notFound);          
 app.use(globalErrorHandler);
@@ -146,35 +130,6 @@ io.on("connection", (socket) => {
       if (onlineUsers[key] === socket.id) delete onlineUsers[key];
     });
   });
-=======
-// 404 Handler
-app.use((req, res, next) => {
-  const error = new Error(`Not Found - ${req.originalUrl}`);
-  error.status = 404;
-  next(error);
-});
-
-// Global Error Handler
-app.use(async (err, req, res, next) => {
-  const statusCode = err.status || (res.statusCode === 200 ? 500 : res.statusCode);
-  const errorMessage = err.message || 'Internal Server Error';
-
-  if (process.env.NODE_ENV !== 'test') console.error("Error:", errorMessage);
-
-  // Attempt to log system errors to audit log
-  try {
-    await logAuditEvent(
-      'server_error_occurred',
-      { type: 'system' },
-      statusCode >= 500 ? 'critical' : 'error',
-      {},
-      { message: errorMessage, url: req.originalUrl, method: req.method },
-      req
-    );
-  } catch (e) { /* Ignore logging errors */ }
-
-  res.status(statusCode).json({ message: errorMessage });
->>>>>>> e8a2ab12d2dc088c7828acf67279e55445c0cb15
 });
 
 const PORT = process.env.PORT || 5000;
