@@ -23,7 +23,6 @@ const publicInterestRoutes = require('./routes/publicInterestRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const keyRoutes = require('./routes/keyRoutes');
 const backupRoutes = require('./routes/backupRoutes');
-const certificateRoutes = require('./routes/certificateRoutes');
 
 // Admin route imports
 const adminAuthRoutes = require('./routes/adminAuthRoutes');
@@ -33,6 +32,7 @@ const adminInterestRoutes = require('./routes/adminInterestRoutes');
 const adminManagementRoutes = require('./routes/adminManagementRoutes');
 const adminAuditLogRoutes = require('./routes/adminAuditLogRoutes');
 const adminLanguageRoutes = require('./routes/adminLanguageRoutes');
+const { notFound, globalErrorHandler } = require('./middleware/errorMiddleware');
 
 dotenv.config();
 
@@ -81,7 +81,6 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/friendships', friendshipRoutes);
 app.use('/api/public/interests', publicInterestRoutes);
 app.use('/api/reports', reportRoutes);
-app.use('/api/certificates', certificateRoutes);
 app.use('/api/keys', keyRoutes);
 app.use('/api/backups', backupRoutes);
 
@@ -93,6 +92,10 @@ app.use('/api/admin/interests', adminInterestRoutes);
 app.use('/api/admin/management', adminManagementRoutes);
 app.use('/api/admin/audit-logs', adminAuditLogRoutes);
 app.use('/api/admin/languages', adminLanguageRoutes);
+
+// Error handling middleware
+app.use(notFound);          
+app.use(globalErrorHandler);
 
 // Socket.io setup
 const httpServer = http.createServer(app);
@@ -119,17 +122,6 @@ io.on("connection", (socket) => {
 
   socket.on('join chat', (room) => socket.join(room.toString()));
 
-  // Broadcast new messages to chat participants
-  socket.on('new message', (newMessageReceived) => {
-    const chat = newMessageReceived.chatId;
-    if (!chat || !chat.participants) return;
-
-    chat.participants.forEach((participant) => {
-      if (participant._id.toString() === newMessageReceived.senderId._id.toString()) return;
-      io.to(participant._id.toString()).emit("message received", newMessageReceived);
-    });
-  });
-
   socket.on('typing', (room) => socket.in(room.toString()).emit('typing', room));
   socket.on('stop typing', (room) => socket.in(room.toString()).emit('stop typing', room));
 
@@ -138,35 +130,6 @@ io.on("connection", (socket) => {
       if (onlineUsers[key] === socket.id) delete onlineUsers[key];
     });
   });
-});
-
-// 404 Handler
-app.use((req, res, next) => {
-  const error = new Error(`Not Found - ${req.originalUrl}`);
-  error.status = 404;
-  next(error);
-});
-
-// Global Error Handler
-app.use(async (err, req, res, next) => {
-  const statusCode = err.status || (res.statusCode === 200 ? 500 : res.statusCode);
-  const errorMessage = err.message || 'Internal Server Error';
-
-  if (process.env.NODE_ENV !== 'test') console.error("Error:", errorMessage);
-
-  // Attempt to log system errors to audit log
-  try {
-    await logAuditEvent(
-      'server_error_occurred',
-      { type: 'system' },
-      statusCode >= 500 ? 'critical' : 'error',
-      {},
-      { message: errorMessage, url: req.originalUrl, method: req.method },
-      req
-    );
-  } catch (e) { /* Ignore logging errors */ }
-
-  res.status(statusCode).json({ message: errorMessage });
 });
 
 const PORT = process.env.PORT || 5000;
