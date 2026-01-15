@@ -1,6 +1,7 @@
 const Friendship = require('../models/Friendship');
 const User = require('../models/User');
 const { validationResult } = require('express-validator');
+const { SOCKET_EVENT } = require('../socket/WSEvent');
 
 // --- Helper: Validate access rights to a friendship
 const validateAccess = (friendship, userId) => {
@@ -190,7 +191,8 @@ const verifyFriendship = async (req, res, next) => {
 const blockFriendship = async (req, res, next) => {
     try {
         const friendship = await Friendship.findById(req.params.friendshipId);
-        validateAccess(friendship, req.user._id);
+        const senderId = req.user._id
+        validateAccess(friendship, senderId);
 
         if (friendship.isBlocked && friendship.blockedBy.equals(req.user._id)) {
             return res.status(400).json({ message: 'Already blocked by you' });
@@ -200,6 +202,13 @@ const blockFriendship = async (req, res, next) => {
         friendship.status = 'blocked';
         friendship.isBlocked = true;
         friendship.blockedBy = req.user._id;
+
+        const io = req.app.get('socketio');
+        if (!currentUserId.equals(friendship.user1)) {
+            io.to(friendship.user1.toString()).emit(SOCKET_EVENT.BLOCK, senderId.toString())
+        } else {
+            io.to(friendship.user2.toString()).emit(SOCKET_EVENT.BLOCK, senderId.toString())
+        }
         
         await friendship.save();
         res.json({ message: 'Blocked', friendship });
@@ -211,7 +220,8 @@ const blockFriendship = async (req, res, next) => {
 const unblockFriendship = async (req, res, next) => {
     try {
         const friendship = await Friendship.findById(req.params.friendshipId);
-        validateAccess(friendship, req.user._id);
+        const senderId = req.user._id
+        validateAccess(friendship, senderId);
 
         if (!friendship.isBlocked) return res.status(400).json({ message: 'Not blocked' });
         if (!friendship.blockedBy.equals(req.user._id)) return res.status(403).json({ message: 'Only blocker can unblock' });
@@ -221,6 +231,14 @@ const unblockFriendship = async (req, res, next) => {
         friendship.blockedBy = null;
 
         await friendship.save();
+        
+        const io = req.app.get('socketio');
+        if (!currentUserId.equals(friendship.user1)) {
+            io.to(friendship.user1.toString()).emit(SOCKET_EVENT.UNBLOCK, senderId.toString())
+        } else {
+            io.to(friendship.user2.toString()).emit(SOCKET_EVENT.UNBLOCK, senderId.toString())
+        }
+
         res.json({ message: 'Unblocked', friendship });
     } catch (error) {
         next(error);

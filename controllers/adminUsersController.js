@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/sendEmail');
 const logAuditEvent = require('../utils/auditLogger');
 const { validationResult } = require('express-validator');
+const { SOCKET_EVENT } = require('../socket/WSEvent');
 require('dotenv').config();
 
 // Helper: Generates temporary JWT for user simulation
@@ -73,6 +74,9 @@ const banUser = async (req, res, next) => {
         user.banReason = banReason;
         user.bannedAt = Date.now();
         await user.save({ validateBeforeSave: false });
+        
+        const io = req.app.get('socketio');
+        io.to(user._id.toString()).emit(SOCKET_EVENT.BAN, "{}")
 
         // Notify user via email
         try {

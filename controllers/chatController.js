@@ -3,6 +3,7 @@ const Message = require('../models/Message');
 const User = require('../models/User');
 const Friendship = require('../models/Friendship');
 const { validationResult } = require('express-validator');
+const { SOCKET_EVENT } = require('../socket/WSEvent')
 
 // Create or retrieve 1-on-1 chat
 const accessChat = async (req, res, next) => {
@@ -95,19 +96,20 @@ const sendMessage = async (req, res, next) => {
             lastMessage: message._id,
             lastMessageTimestamp: message.createdAt
         });
+        
+        const result = message.toObject();
+        delete result.__v;
 
         // Real-time delivery
         const io = req.app.get('socketio');
         if (io) {
             chat.participants.forEach(p => {
                 if (!p._id.equals(senderId)) {
-                    io.to(p._id.toString()).emit("message received", message.toObject());
+                    io.to(p._id.toString()).emit(SOCKET_EVENT.RECEIVE, result);
                 }
             });
         }
 
-        const result = message.toObject();
-        delete result.__v;
         res.status(200).json(result);
 
     } catch (error) {
