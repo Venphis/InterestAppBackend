@@ -109,30 +109,7 @@ const io = new Server(httpServer, {
 // Expose Socket.io instance to the app
 app.set('socketio', io);
 setupSocketCallbacks(io);
-let onlineUsers = {};
 
-io.on("connection", (socket) => {
-  if (process.env.NODE_ENV !== 'test') console.log("Client connected:", socket.id);
-
-  // Map user ID to socket ID
-  socket.on('setup', (userData) => {
-    if (!userData || !userData._id) return;
-    socket.join(userData._id.toString());
-    onlineUsers[userData._id.toString()] = socket.id;
-    socket.emit('connected');
-  });
-
-  socket.on('join chat', (room) => socket.join(room.toString()));
-
-  socket.on('typing', (room) => socket.in(room.toString()).emit('typing', room));
-  socket.on('stop typing', (room) => socket.in(room.toString()).emit('stop typing', room));
-
-  socket.on("disconnect", () => {
-    Object.keys(onlineUsers).forEach(key => {
-      if (onlineUsers[key] === socket.id) delete onlineUsers[key];
-    });
-  });
-});
 
 const PORT = process.env.PORT || 5000;
 
