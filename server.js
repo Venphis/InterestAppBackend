@@ -33,6 +33,8 @@ const adminManagementRoutes = require('./routes/adminManagementRoutes');
 const adminAuditLogRoutes = require('./routes/adminAuditLogRoutes');
 const adminLanguageRoutes = require('./routes/adminLanguageRoutes');
 const { notFound, globalErrorHandler } = require('./middleware/errorMiddleware');
+const { setupSocketCallbacks } = require('./socket/setupSocketCallbacks')
+const { SOCKET_EVENT } = require('./socket/WSEvent');
 
 dotenv.config();
 
@@ -106,7 +108,7 @@ const io = new Server(httpServer, {
 
 // Expose Socket.io instance to the app
 app.set('socketio', io);
-
+setupSocketCallbacks(io);
 let onlineUsers = {};
 
 io.on("connection", (socket) => {

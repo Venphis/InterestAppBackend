@@ -189,61 +189,66 @@ const verifyFriendship = async (req, res, next) => {
 };
 
 const blockFriendship = async (req, res, next) => {
-    try {
-        const friendship = await Friendship.findById(req.params.friendshipId);
-        const senderId = req.user._id
-        validateAccess(friendship, senderId);
+  try {
+    const friendship = await Friendship.findById(req.params.friendshipId);
+    const senderId = req.user._id;
+    validateAccess(friendship, senderId);
 
-        if (friendship.isBlocked && friendship.blockedBy.equals(req.user._id)) {
-            return res.status(400).json({ message: 'Already blocked by you' });
-        }
-        if (friendship.status !== 'accepted') return res.status(400).json({ message: 'Can only block active friends' });
-
-        friendship.status = 'blocked';
-        friendship.isBlocked = true;
-        friendship.blockedBy = req.user._id;
-
-        const io = req.app.get('socketio');
-        if (!currentUserId.equals(friendship.user1)) {
-            io.to(friendship.user1.toString()).emit(SOCKET_EVENT.BLOCK, senderId.toString())
-        } else {
-            io.to(friendship.user2.toString()).emit(SOCKET_EVENT.BLOCK, senderId.toString())
-        }
-        
-        await friendship.save();
-        res.json({ message: 'Blocked', friendship });
-    } catch (error) {
-        next(error);
+    if (friendship.isBlocked && friendship.blockedBy.equals(senderId)) {
+      return res.status(400).json({ message: 'Already blocked by you' });
     }
+    if (friendship.status !== 'accepted') {
+      return res.status(400).json({ message: 'Can only block active friends' });
+    }
+
+    friendship.status = 'blocked';
+    friendship.isBlocked = true;
+    friendship.blockedBy = senderId;
+
+    const otherUserId = friendship.user1.equals(senderId) ? friendship.user2 : friendship.user1;
+
+    const io = req.app.get('socketio');
+    if (io && typeof io.to === 'function') {
+      io.to(otherUserId.toString()).emit(SOCKET_EVENT.BLOCK, senderId.toString());
+    }
+
+    await friendship.save();
+    res.json({ message: 'Blocked', friendship });
+  } catch (error) {
+    next(error);
+  }
 };
 
 const unblockFriendship = async (req, res, next) => {
-    try {
-        const friendship = await Friendship.findById(req.params.friendshipId);
-        const senderId = req.user._id
-        validateAccess(friendship, senderId);
+  try {
+    const friendship = await Friendship.findById(req.params.friendshipId);
+    const senderId = req.user._id;
+    validateAccess(friendship, senderId);
 
-        if (!friendship.isBlocked) return res.status(400).json({ message: 'Not blocked' });
-        if (!friendship.blockedBy.equals(req.user._id)) return res.status(403).json({ message: 'Only blocker can unblock' });
-
-        friendship.status = 'accepted';
-        friendship.isBlocked = false;
-        friendship.blockedBy = null;
-
-        await friendship.save();
-        
-        const io = req.app.get('socketio');
-        if (!currentUserId.equals(friendship.user1)) {
-            io.to(friendship.user1.toString()).emit(SOCKET_EVENT.UNBLOCK, senderId.toString())
-        } else {
-            io.to(friendship.user2.toString()).emit(SOCKET_EVENT.UNBLOCK, senderId.toString())
-        }
-
-        res.json({ message: 'Unblocked', friendship });
-    } catch (error) {
-        next(error);
+    if (!friendship.isBlocked) return res.status(400).json({ message: 'Not blocked' });
+    if (!friendship.blockedBy.equals(senderId)) {
+      return res.status(403).json({ message: 'Only blocker can unblock' });
     }
+
+    friendship.status = 'accepted';
+    friendship.isBlocked = false;
+    friendship.blockedBy = null;
+
+    const otherUserId = friendship.user1.equals(senderId) ? friendship.user2 : friendship.user1;
+
+    await friendship.save();
+
+    const io = req.app.get('socketio');
+    if (io && typeof io.to === 'function') {
+      io.to(otherUserId.toString()).emit(SOCKET_EVENT.UNBLOCK, senderId.toString());
+    }
+
+    res.json({ message: 'Unblocked', friendship });
+  } catch (error) {
+    next(error);
+  }
 };
+
 
 module.exports = {
     sendFriendRequest,
