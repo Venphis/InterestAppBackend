@@ -1,7 +1,7 @@
 function createEvents(...names) {
   return Object.freeze(
     names.reduce((acc, name) => {
-      acc[name] = name;
+      acc[name] = name.toLowerCase();
       return acc;
     }, {})
   );
