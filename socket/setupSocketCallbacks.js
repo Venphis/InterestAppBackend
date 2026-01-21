@@ -13,6 +13,7 @@ const setupSocketCallbacks = (io) => {
         if (process.env.NODE_ENV !== 'test') console.log("Client connected:", userId);
         if (socket.user.isBanned) {
             socket.emit(SOCKET_EVENT.BAN, "{}")
+            socket.disconnect(true);
         }
         socket.join(userId);
         onlineUsers[socket] = userId;
