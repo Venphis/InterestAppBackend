@@ -5,8 +5,8 @@ const authorizeSocket = async (socket, next) => {
     const token = socket.handshake.query.token;
 
     if (!token) {
-        socket.disconnect(true);
-        return;
+        socket.failedAuth = true   
+        socket.errorMessage =  "no token"
     }
 
     try {
@@ -17,16 +17,20 @@ const authorizeSocket = async (socket, next) => {
             .where({ isDeleted: false});
 
         if (!user) {
-            socket.disconnect(true);
-            return;
+            socket.failedAuth = true   
+            socket.errorMessage =  "no user found"
+        } else {
+            socket.user = user;
+            socket.failedAuth = false;
         }
 
-        socket.user = user;
         next();
 
     } catch (error) {
-        console.error('[SocketAuth] Failed:', error.message);
-        socket.disconnect(true);
+        console.error('[SocketAuth] Error:', error.message);
+        socket.failedAuth = true   
+        socket.errorMessage = error.message
+        next();
     }
 };
 
