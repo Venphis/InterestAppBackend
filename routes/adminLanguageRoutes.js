@@ -37,7 +37,7 @@ const updateValidation = [
 
 router.route('/')
   .get(
-    authorizeAdminRole(['admin', 'superadmin']),
+    authorizeAdminRole(['admin', 'superadmin', 'moderator']),
     [query('showArchived').optional().isBoolean().toBoolean()],
     getLanguages
   )
