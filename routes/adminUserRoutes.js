@@ -49,7 +49,7 @@ router.route('/:userId')
     .delete(authorizeAdminRole(['superadmin']), userIdValidation, deleteUser);
 
 // User Actions
-router.put('/:userId/ban', authorizeAdminRole(['admin', 'superadmin']), banValidation, banUser);
+router.put('/:userId/ban', authorizeAdminRole(['admin', 'superadmin', 'moderator']), banValidation, banUser);
 router.put('/:userId/unban', authorizeAdminRole(['admin', 'superadmin', 'moderator']), userIdValidation, unbanUser);
 router.put('/:userId/restore', authorizeAdminRole(['admin','superadmin']), userIdValidation, restoreUser);
 router.put('/:userId/verify-email', authorizeAdminRole(['admin', 'superadmin']), userIdValidation, manuallyVerifyEmail);
