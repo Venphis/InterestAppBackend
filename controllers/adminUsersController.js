@@ -91,6 +91,7 @@ const banUser = async (req, res, next) => {
 
         await logAuditEvent('admin_banned_user', { type: 'admin', id: req.adminUser._id }, 'admin_action', { type: 'user', id: user._id }, { banReason }, req);
         res.json({ message: `User banned: ${banReason}` });
+
     } catch (error) {
         console.error('Ban User Error:', error.message);
         next(error);
@@ -281,3 +282,4 @@ module.exports = {
     changeUserRole,
     getUserInterestsAdmin
 };
+

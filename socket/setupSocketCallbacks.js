@@ -9,11 +9,24 @@ const setupSocketCallbacks = (io) => {
     io.use(authorizeSocket);
 
     io.on("connection", (socket) => {
+
+        if (socket.failedAuth === true) {
+            console.error('[SocketAuth] Failed');
+            socket.emit(SOCKET_EVENT.FAILED_AUTH, `${socket.errorMessage}`)
+            socket.disconnect(true);
+            return;
+        }
+
         const userId = socket.user._id.toString();
+
         if (process.env.NODE_ENV !== 'test') console.log("Client connected:", userId);
+
         if (socket.user.isBanned) {
             socket.emit(SOCKET_EVENT.BAN, "{}")
+            socket.disconnect(true);
+            return;
         }
+
         socket.join(userId);
         onlineUsers[socket] = userId;
         

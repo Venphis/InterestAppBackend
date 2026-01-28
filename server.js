@@ -33,6 +33,8 @@ const adminManagementRoutes = require('./routes/adminManagementRoutes');
 const adminAuditLogRoutes = require('./routes/adminAuditLogRoutes');
 const adminLanguageRoutes = require('./routes/adminLanguageRoutes');
 const { notFound, globalErrorHandler } = require('./middleware/errorMiddleware');
+
+// socket related imports
 const { setupSocketCallbacks } = require('./socket/setupSocketCallbacks')
 const { SOCKET_EVENT } = require('./socket/WSEvent');
 
@@ -75,6 +77,17 @@ app.get('/', (req, res) => {
   res.send(`API is running.`);
 });
 
+// Socket.io setup
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {
+  pingTimeout: 60000,
+  cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] },
+});
+
+// Expose Socket.io instance to the app
+app.set('socketio', io);
+setupSocketCallbacks(io);
+
 // Register API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -98,18 +111,6 @@ app.use('/api/admin/languages', adminLanguageRoutes);
 // Error handling middleware
 app.use(notFound);          
 app.use(globalErrorHandler);
-
-// Socket.io setup
-const httpServer = http.createServer(app);
-const io = new Server(httpServer, {
-  pingTimeout: 60000,
-  cors: { origin: "*", methods: ["GET", "POST", "PUT", "DELETE"] },
-});
-
-// Expose Socket.io instance to the app
-app.set('socketio', io);
-setupSocketCallbacks(io);
-
 
 const PORT = process.env.PORT || 5000;
 
