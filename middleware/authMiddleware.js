@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
 // Authenticates standard user requests: verifies JWT and checks account status
+// android app looks for: Not Authorized in the message
 const protect = async (req, res, next) => {
     if (!req.headers.authorization || !req.headers.authorization.startsWith('Bearer ')) {
         return res.status(401).json({ message: 'Not authorized, no token provided' });

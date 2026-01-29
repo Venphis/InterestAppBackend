@@ -49,6 +49,11 @@ const sendFriendRequest = async (req, res, next) => {
             friendshipType: 'unverified'
         });
 
+        const io = req.app.get('socketio');
+        if (io) {
+            io.to(recipientId.toString()).emit(SOCKET_EVENT.FRIENDSHIP_INVITE, requesterId.toString());
+        }
+
         res.status(201).json({ message: 'Request sent', friendship: newFriendship });
     } catch (error) {
         if (error.code === 11000) return res.status(400).json({ message: 'Conflict detected' });
@@ -73,6 +78,14 @@ const acceptFriendRequest = async (req, res, next) => {
         const updated = await friendship.save();
         const populated = await Friendship.findById(updated._id).populate('user1 user2', 'username profile');
 
+        const requesterId = friendship.user1.toString()
+        const friendshipId = friendship._id.toString()
+
+        const io = req.app.get('socketio');
+        if (io) {
+            io.to(requesterId).emit(SOCKET_EVENT.ACCEPT_INVITE, friendshipId);
+        }
+
         res.json({ message: 'Accepted', friendship: populated });
     } catch (error) {
         next(error);
@@ -91,6 +104,15 @@ const rejectFriendRequest = async (req, res, next) => {
         friendship.status = 'rejected';
         await friendship.save();
 
+
+        const requesterId = friendship.user1.toString()
+        const friendshipId = friendship._id.toString()
+
+        const io = req.app.get('socketio');
+        if (io) {
+            io.to(requesterId).emit(SOCKET_EVENT.REJECT_INVITE, friendshipId);
+        }
+
         res.json({ message: 'Rejected' });
     } catch (error) {
         next(error);
@@ -102,14 +124,21 @@ const removeFriendship = async (req, res, next) => {
         const friendship = await Friendship.findById(req.params.friendshipId);
         validateAccess(friendship, req.user._id);
 
-        const isSender = friendship.requestedBy?.equals(req.user._id);
-
-        if (friendship.status === 'accepted' || (friendship.status === 'pending' && isSender)) {
+        if (friendship.status === 'accepted' || friendship.status === 'blocked') {
             await friendship.deleteOne();
             res.json({ message: 'Removed' });
         } else {
             res.status(400).json({ message: 'Cannot remove in current state' });
         }
+
+        const friendshipId = friendship._id.toString()
+        const recipientId = friendship.user1 === req.user._id ? friendship.user2.toString() : friendship.user1.toString();        
+
+        const io = req.app.get('socketio');
+        if (io) {
+            io.to(recipientId).emit(SOCKET_EVENT.UNFRIEND, friendshipId);
+        }
+
     } catch (error) {
         next(error);
     }
@@ -140,8 +169,8 @@ const getFriendships = async (req, res, next) => {
 
     try {
         const friendships = await Friendship.find(query)
-            .populate({ path: 'user1', select: 'username profile', match: { isDeleted: false } })
-            .populate({ path: 'user2', select: 'username profile', match: { isDeleted: false } })
+            .populate({ path: 'user1', select: 'username email profile', match: { isDeleted: false } })
+            .populate({ path: 'user2', select: 'username email profile', match: { isDeleted: false } })
             .sort({ createdAt: -1 })
             .lean();
 
@@ -188,126 +217,92 @@ const verifyFriendship = async (req, res, next) => {
     }
 };
 
+
+
 const blockFriendship = async (req, res, next) => {
   try {
     const friendship = await Friendship.findById(req.params.friendshipId);
-    const senderId = req.user._id;
-    validateAccess(friendship, senderId);
+    const currentUserId = req.user._id;
 
-    if (friendship.isBlocked && friendship.blockedBy.equals(senderId)) {
+    if (!friendship) {
+      return res.status(404).json({ message: 'Friendship not found' });
+    }
+
+    validateAccess(friendship, currentUserId);
+
+    if (friendship.isBlocked && friendship.blockedBy.equals(currentUserId)) {
       return res.status(400).json({ message: 'Already blocked by you' });
     }
-    const { friendshipId } = req.params;
-    const currentUserId = req.user._id;
-    try {
-        const friendship = await Friendship.findById(friendshipId);
-        if (!friendship) return res.status(404).json({ message: 'Friendship not found.' });
-        if (!currentUserId.equals(friendship.user1) && !currentUserId.equals(friendship.user2)) {
-            return res.status(403).json({ message: 'You are not part of this friendship.' });
-        }
-        
-        if (friendship.status === 'pending' || friendship.status === 'rejected') {
-             return res.status(400).json({ message: 'Cannot block a pending or rejected request. Friendship must be accepted first or remove the request.'});
-        }
 
-        const oldStatus = friendship.status;
-        friendship.status = 'blocked';
-        friendship.blockedBy = currentUserId;
-        friendship.isBlocked = true;
-        const updatedFriendship = await friendship.save();
-        
-
-        const io = req.app.get('socketio');
-        if (!currentUserId.equals(friendship.user1)) {
-            io.to(friendship.user1.toString()).emit(SOCKET_EVENT.BLOCK, currentUserId.toString())
-        } else {
-            io.to(friendship.user2.toString()).emit(SOCKET_EVENT.BLOCK, currentUserId.toString())
-        }
-
-        res.status(200).json({ message: 'Friendship blocked.', friendship: updatedFriendship.toObject({ getters:false, virtuals:false }) });
-    } catch (error) {
-        console.error('[friendshipCtrl] Block Friendship Error:', error);
-        next(error);
-    }
     if (friendship.status !== 'accepted') {
       return res.status(400).json({ message: 'Can only block active friends' });
     }
 
     friendship.status = 'blocked';
     friendship.isBlocked = true;
-    friendship.blockedBy = senderId;
-
-    const otherUserId = friendship.user1.equals(senderId) ? friendship.user2 : friendship.user1;
-
-    const io = req.app.get('socketio');
-    if (io && typeof io.to === 'function') {
-      io.to(otherUserId.toString()).emit(SOCKET_EVENT.BLOCK, senderId.toString());
-    }
+    friendship.blockedBy = currentUserId;
 
     await friendship.save();
-    res.json({ message: 'Blocked', friendship });
+
+    const otherUserId = friendship.user1.equals(currentUserId)
+      ? friendship.user2
+      : friendship.user1;
+
+    const io = req.app.get('socketio');
+    io?.to(otherUserId.toString()).emit(
+      SOCKET_EVENT.BLOCK,
+      currentUserId.toString()
+    );
+
+    return res.json({ message: 'Blocked', friendship });
   } catch (error) {
     next(error);
   }
 };
 
+
+
 const unblockFriendship = async (req, res, next) => {
   try {
     const friendship = await Friendship.findById(req.params.friendshipId);
-    const senderId = req.user._id;
-    validateAccess(friendship, senderId);
-
-    if (!friendship.isBlocked) return res.status(400).json({ message: 'Not blocked' });
-    if (!friendship.blockedBy.equals(senderId)) {
-      return res.status(403).json({ message: 'Only blocker can unblock' });
-    }
-    const { friendshipId } = req.params;
     const currentUserId = req.user._id;
-    try {
-        const friendship = await Friendship.findById(friendshipId);
-        const oldStatus = friendship.status;
-        if (!friendship) return res.status(404).json({ message: 'Friendship not found.' });
-        if (!currentUserId.equals(friendship.user1) && !currentUserId.equals(friendship.user2)) {
-             return res.status(403).json({ message: 'You are not part of this friendship.' });
-        }
-        
 
-        friendship.status = 'accepted'; 
-        friendship.isBlocked = false; 
-        friendship.blockedBy = null; 
-        const updatedFriendship = await friendship.save();
-        
-        const io = req.app.get('socketio');
-        if (!currentUserId.equals(friendship.user1)) {
-            io.to(friendship.user1.toString()).emit(SOCKET_EVENT.UNBLOCK, currentUserId.toString())
-        } else {
-            io.to(friendship.user2.toString()).emit(SOCKET_EVENT.UNBLOCK, currentUserId.toString())
-        }
+    if (!friendship) {
+      return res.status(404).json({ message: 'Friendship not found' });
+    }
 
-        res.status(200).json({ message: 'Friendship unblocked.', friendship: updatedFriendship.toObject({ getters:false, virtuals:false }) });
-    } catch (error) {
-        console.error('[friendshipCtrl] Unblock Friendship Error:', error);
-        next(error);
+    validateAccess(friendship, currentUserId);
+
+    if (!friendship.isBlocked) {
+      return res.status(400).json({ message: 'Not blocked' });
+    }
+
+    if (!friendship.blockedBy.equals(currentUserId)) {
+      return res.status(403).json({ message: 'Only blocker can unblock' });
     }
 
     friendship.status = 'accepted';
     friendship.isBlocked = false;
     friendship.blockedBy = null;
 
-    const otherUserId = friendship.user1.equals(senderId) ? friendship.user2 : friendship.user1;
-
     await friendship.save();
 
-    const io = req.app.get('socketio');
-    if (io && typeof io.to === 'function') {
-      io.to(otherUserId.toString()).emit(SOCKET_EVENT.UNBLOCK, senderId.toString());
-    }
+    const otherUserId = friendship.user1.equals(currentUserId)
+      ? friendship.user2
+      : friendship.user1;
 
-    res.json({ message: 'Unblocked', friendship });
+    const io = req.app.get('socketio');
+    io?.to(otherUserId.toString()).emit(
+      SOCKET_EVENT.UNBLOCK,
+      currentUserId.toString()
+    );
+
+    return res.json({ message: 'Unblocked', friendship });
   } catch (error) {
     next(error);
   }
 };
+
 
 
 module.exports = {

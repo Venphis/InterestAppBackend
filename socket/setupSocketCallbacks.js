@@ -3,7 +3,7 @@ const { authorizeSocket } = require('./authorizeSocket')
 const Chat = require('../models/Chat');
 const Message = require('../models/Message');
 
-let onlineUsers = {};
+let onlineUsers = new Set();
 
 const setupSocketCallbacks = (io) => {
     io.use(authorizeSocket);
@@ -28,7 +28,7 @@ const setupSocketCallbacks = (io) => {
         }
 
         socket.join(userId);
-        onlineUsers[socket] = userId;
+        onlineUsers.add(userId);
         
         socket.on(SOCKET_EVENT.SEND, async (payload) => {
             console.log("in send", payload);
@@ -94,9 +94,7 @@ const setupSocketCallbacks = (io) => {
 
         socket.on("disconnect", () => {
             if (process.env.NODE_ENV !== 'test') console.log("Client disconnected:", userId);
-            Object.keys(onlineUsers).forEach(key => {
-                if (onlineUsers[key] === socket.id) delete onlineUsers[key];
-            });
+            onlineUsers.delete(userId);
         });
     });
 }

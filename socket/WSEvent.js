@@ -15,7 +15,11 @@ const SOCKET_EVENT = createEvents(
     "BLOCK",
     "UNBLOCK",
     "BAN",
-    "FAILED_AUTH"
+    "FAILED_AUTH",
+    "FRIENDSHIP_INVITE",
+    "ACCEPT_INVITE",
+    "REJECT_INVITE",
+    "UNFRIEND"
 );
 
 module.exports = { SOCKET_EVENT };
