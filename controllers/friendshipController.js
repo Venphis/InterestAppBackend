@@ -79,7 +79,7 @@ const acceptFriendRequest = async (req, res, next) => {
         const populated = await Friendship.findById(updated._id).populate('user1 user2', 'username profile');
 
         const friendshipId = friendship._id.toString()
-        const recipientId = friendship.user1 === req.user._id ? friendship.user2.toString() : friendship.user1.toString();        
+        const recipientId = friendship.user1.toString() === req.user._id.toString() ? friendship.user2.toString() : friendship.user1.toString();        
 
         const io = req.app.get('socketio');
         if (io) {
@@ -105,7 +105,7 @@ const rejectFriendRequest = async (req, res, next) => {
         await friendship.save();
 
         const friendshipId = friendship._id.toString()
-        const recipientId = friendship.user1 === req.user._id ? friendship.user2.toString() : friendship.user1.toString();        
+        const recipientId = friendship.user1.toString() === req.user._id.toString() ? friendship.user2.toString() : friendship.user1.toString();        
 
         const io = req.app.get('socketio');
         if (io) {
@@ -123,15 +123,15 @@ const removeFriendship = async (req, res, next) => {
         const friendship = await Friendship.findById(req.params.friendshipId);
         validateAccess(friendship, req.user._id);
 
+        const friendshipId = friendship._id.toString()
+        const recipientId = friendship.user1.toString() === req.user._id.toString() ? friendship.user2.toString() : friendship.user1.toString();        
+
         if (friendship.status === 'accepted' || friendship.status === 'blocked') {
             await friendship.deleteOne();
             res.json({ message: 'Removed' });
         } else {
             res.status(400).json({ message: 'Cannot remove in current state' });
         }
-
-        const friendshipId = friendship._id.toString()
-        const recipientId = friendship.user1 === req.user._id ? friendship.user2.toString() : friendship.user1.toString();        
 
         const io = req.app.get('socketio');
         if (io) {
