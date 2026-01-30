@@ -78,12 +78,12 @@ const acceptFriendRequest = async (req, res, next) => {
         const updated = await friendship.save();
         const populated = await Friendship.findById(updated._id).populate('user1 user2', 'username profile');
 
-        const requesterId = friendship.user1.toString()
         const friendshipId = friendship._id.toString()
+        const recipientId = friendship.user1 === req.user._id ? friendship.user2.toString() : friendship.user1.toString();        
 
         const io = req.app.get('socketio');
         if (io) {
-            io.to(requesterId).emit(SOCKET_EVENT.ACCEPT_INVITE, friendshipId);
+            io.to(recipientId).emit(SOCKET_EVENT.ACCEPT_INVITE, friendshipId);
         }
 
         res.json({ message: 'Accepted', friendship: populated });
@@ -104,13 +104,12 @@ const rejectFriendRequest = async (req, res, next) => {
         friendship.status = 'rejected';
         await friendship.save();
 
-
-        const requesterId = friendship.user1.toString()
         const friendshipId = friendship._id.toString()
+        const recipientId = friendship.user1 === req.user._id ? friendship.user2.toString() : friendship.user1.toString();        
 
         const io = req.app.get('socketio');
         if (io) {
-            io.to(requesterId).emit(SOCKET_EVENT.REJECT_INVITE, friendshipId);
+            io.to(recipientId).emit(SOCKET_EVENT.REJECT_INVITE, friendshipId);
         }
 
         res.json({ message: 'Rejected' });
